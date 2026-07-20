@@ -1,0 +1,46 @@
+:root {
+  color-scheme: dark;
+
+  /* Foundations */
+  --color-bg: #050316;
+  --color-bg-subtle: #08051d;
+  --color-surface: #0d0928;
+  --color-surface-elevated: #15103a;
+  --color-surface-hover: #1b1547;
+
+  /* Brand */
+  --color-primary: #5b42e8;
+  --color-primary-hover: #705cf0;
+  --color-primary-soft: #2a1d78;
+  --color-violet-highlight: #a99bff;
+  --color-value: #c09a52;
+  --color-value-highlight: #e0bd72;
+
+  /* Content and structure */
+  --color-text: #f3f1fb;
+  --color-text-secondary: #b5b0c9;
+  --color-text-muted: #7f7999;
+  --color-border: #2b2460;
+  --color-border-strong: #44388e;
+  --color-focus: #8f7cff;
+
+  /* Investment states */
+  --color-gain: #5bc59b;
+  --color-loss: #f07a89;
+  --color-warning: #d5a94e;
+  --color-info: #6da8e8;
+
+  /* Chart series */
+  --chart-1: #7662ee;
+  --chart-2: #c09a52;
+  --chart-3: #5bc59b;
+  --chart-4: #6da8e8;
+  --chart-5: #b472d1;
+  --chart-grid: rgb(169 155 255 / 12%);
+
+  /* Effects */
+  --gradient-brand: linear-gradient(135deg, #2a1d78 0%, #5b42e8 52%, #a99bff 100%);
+  --gradient-value: linear-gradient(135deg, #7662ee 0%, #c09a52 100%);
+  --shadow-card: 0 16px 40px rgb(2 1 12 / 36%);
+  --glow-focus: 0 0 0 3px rgb(143 124 255 / 24%);
+}
