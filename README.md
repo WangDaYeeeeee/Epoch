@@ -21,13 +21,27 @@
 
 ## 本地运行
 
-首个开发切片已使用 TypeScript 实现。它默认读取 `tmp/satellite-data` 中已清洗的本地卫星仓数据；该目录被 Git 忽略，不会提交真实账户数据。
+Phase 0 已使用 TypeScript 实现。完整环境通过一条命令启动：
+
+```bash
+docker compose up --build
+```
+
+打开 `http://localhost:3000`。启动链路会等待 PostgreSQL 就绪、幂等执行迁移，然后启动 Web/API 与轻量调度器。若存在 `tmp/satellite-data`，系统读取已清洗的本地卫星仓数据；该目录被 Git 忽略。若不存在，系统自动使用可重现的合成 Demo，因此新环境不依赖任何私人文件即可运行。
+
+不使用 Docker 时，可以分别运行：
 
 ```bash
 pnpm install
+pnpm db:migrate
 pnpm dev
+pnpm scheduler
 ```
 
-打开 `http://localhost:3000`。组合 JSON API 位于 `GET /api/v1/portfolio`。
+主要端点：
 
-也可以使用 `docker compose up --build` 一条命令启动 Web/API 与 PostgreSQL。当前页面包含 `.NDX` 对数净值比较、事件点、回撤深度和可拖拽时间范围；合成数据保留在 `data/demo`，仅作为后续确定性账本测试样本。
+- `GET /api/health`：数据库、迁移、数据来源与交易权限状态；
+- `GET /api/v1/portfolio`：当前组合；
+- `GET /api/v1/calculations/demo`：从固定交易、现金流和价格重建的每日账本。
+
+Phase 0 的范围与验收证据见 [docs/PHASE0.md](docs/PHASE0.md)，数据约定见 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)。

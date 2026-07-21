@@ -12,6 +12,17 @@ services:
       retries: 10
     ports: ["127.0.0.1:5432:5432"]
     volumes: ["epoch-postgres:/var/lib/postgresql/data"]
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
+    command: ["pnpm", "db:migrate"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
   web:
     build:
       context: .
@@ -22,8 +33,24 @@ services:
     ports: ["127.0.0.1:3000:3000"]
     volumes:
       - ./tmp/satellite-data:/data/satellite-data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
     depends_on:
-      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
+      SCHEDULER_POLL_MS: "30000"
+    command: ["pnpm", "scheduler"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
 
 volumes:
   epoch-postgres:

@@ -17,4 +17,12 @@ describe("staged satellite portfolio", () => {
       [...payload.positions].map((position) => position.marketValue).sort((left, right) => right - left),
     );
   });
+
+  it("falls back to a fully reproducible synthetic portfolio without private data", () => {
+    const payload = loadPortfolio(null);
+    expect(payload.meta.account).toBe("DEMO-SATELLITE-USD");
+    expect(payload.health.ledgerBalanced).toBe(true);
+    expect(payload.health.source).toBe("synthetic");
+    expect(payload.series).toHaveLength(10);
+  });
 });

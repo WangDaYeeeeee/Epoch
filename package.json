@@ -5,6 +5,10 @@
   "scripts": {
     "dev": "pnpm --filter @epoch/web dev",
     "build": "pnpm --filter @epoch/web build",
-    "lint": "pnpm --filter @epoch/web lint"
+    "lint": "pnpm --filter @epoch/web lint",
+    "test": "pnpm --filter @epoch/web test",
+    "db:migrate": "pnpm --filter @epoch/web db:migrate",
+    "scheduler": "pnpm --filter @epoch/web scheduler",
+    "scheduler:once": "pnpm --filter @epoch/web scheduler:once"
   }
 }
