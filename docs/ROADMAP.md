@@ -7,9 +7,9 @@
 
 本文只负责项目阶段、交付物、依赖关系和验收标准，不承载产品需求、技术设计或投资规则。
 
-- 产品范围与用户体验见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)；
-- 系统结构与工程约束见 [TECHNICAL_ARCHITECTURE.md](TECHNICAL_ARCHITECTURE.md)；
-- 投资原则与策略规则见 [INVESTMENT_FRAMEWORK.md](INVESTMENT_FRAMEWORK.md)。
+- 产品范围与用户体验见 [DESIGN.md](DESIGN.md)；
+- 系统结构与工程约束见 [ARCHITECTURE.md](ARCHITECTURE.md)；
+- 投资原则与策略规则见 [STRATEGY.md](STRATEGY.md)。
 
 ## 2. 实施原则
 
@@ -206,4 +206,3 @@ Phase 3 的投资规则定义可以与 Phase 1、Phase 2 并行讨论，但事�
 5. 展示账本守恒和数据健康状态。
 
 这个切片验证最重要的领域模型和计算口径，不依赖真实 IBKR 凭证、新闻或模型。
-

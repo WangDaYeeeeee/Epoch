@@ -10,17 +10,11 @@
 - **风险管理**：基于风险信号对组合风险敞口进行管控；
 - **辅助投研**：对外暴露 Skills & APIs，便于借助代理式 AI 进行投研分析；
 
-## 视觉资产
-
-- [Banner](assets/banner.png)
-- [EPOCH 字标](assets/wordmark.png)
-- [应用 Icon](assets/icon.png)
-- [Favicon PNG](assets/favicon.png) / [Favicon ICO](assets/favicon.ico)
-- [网页配色方案](docs/WEB_COLOR_PALETTE.md) / [可视化色板](assets/color-palette.png) / [CSS 变量](assets/theme.css)
-
 ## 项目文档
 
-- [产品设计](docs/PRODUCT_DESIGN.md)：产品定位、范围、用户体验和验收场景
-- [技术架构](docs/TECHNICAL_ARCHITECTURE.md)：系统结构、数据模型、技术选型和安全边界
-- [投资框架](docs/INVESTMENT_FRAMEWORK.md)：投资原则、证据政策、风险和仓位规则
-- [实施路线](docs/PROJECT_PLAN.md)：开发阶段、依赖关系和阶段验收标准
+- [产品设计](docs/DESIGN.md)：产品定位、范围、用户体验和验收场景
+- [技术架构](docs/ARCHITECTURE.md)：系统结构、数据模型、技术选型和安全边界
+- [投资框架](docs/STRATEGY.md)：投资原则、证据政策、风险和仓位规则
+- [实施路线](docs/ROADMAP.md)：开发阶段、依赖关系和阶段验收标准
+- [视觉规范](docs/THEME.md)：网页配色方案与主题规范
+- [视觉资产](assets/)：项目使用的图片、图标与主题资源

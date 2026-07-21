@@ -1,5 +1,16 @@
+@font-face {
+  font-family: "Montserrat";
+  src: url("./fonts/Montserrat-SemiBold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
+
+  /* Typography */
+  --font-display: "Montserrat", "Avenir Next", sans-serif;
 
   /* Foundations */
   --color-bg: #050316;
