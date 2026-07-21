@@ -1,0 +1,10 @@
+{
+  "name": "epoch",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "pnpm --filter @epoch/web dev",
+    "build": "pnpm --filter @epoch/web build",
+    "lint": "pnpm --filter @epoch/web lint"
+  }
+}

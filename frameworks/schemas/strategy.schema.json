@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "version", "status", "account_scope", "portfolio", "benchmark", "base_currency", "reporting_currency", "risk_currency", "trading_capability"],
+  "properties": {
+    "id": {"type": "string"}, "version": {"type": "string"},
+    "status": {"enum": ["draft", "active", "retired"]},
+    "account_scope": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "portfolio": {"type": "string"}, "benchmark": {"const": ".NDX"},
+    "base_currency": {"const": "USD"}, "reporting_currency": {"const": "USD"}, "risk_currency": {"const": "USD"},
+    "trading_capability": {"const": "read_only"}
+  },
+  "additionalProperties": false
+}

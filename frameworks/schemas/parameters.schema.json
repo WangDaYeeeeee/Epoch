@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["id", "version", "status", "calibration_required", "theta", "portfolio_volatility_limit"],
+  "properties": {
+    "id": {"type": "string"}, "version": {"type": "string"}, "status": {"enum": ["draft", "active", "retired"]},
+    "calibration_required": {"type": "boolean"}, "theta": {"type": "number", "minimum": 0, "maximum": 1},
+    "portfolio_volatility_limit": {"type": "number", "minimum": 0}, "stress_week_loss_limit": {"type": "number", "maximum": 0},
+    "drawdown_risk_only_threshold": {"type": "number", "maximum": 0}, "near_event_trading_days": {"type": "integer", "minimum": 1},
+    "rc_warning_multiplier": {"type": "number", "minimum": 1}, "rc_trigger_multiplier": {"type": "number", "minimum": 1}
+  },
+  "additionalProperties": false
+}

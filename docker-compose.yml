@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: epoch
+      POSTGRES_USER: epoch
+      POSTGRES_PASSWORD: epoch-local-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U epoch"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["epoch-postgres:/var/lib/postgresql/data"]
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
+      EPOCH_DATA_ROOT: /data/satellite-data
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - ./tmp/satellite-data:/data/satellite-data:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  epoch-postgres:

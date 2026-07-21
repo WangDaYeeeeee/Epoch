@@ -1,0 +1,14 @@
+{
+  "$schema": "../schemas/parameters.schema.json",
+  "id": "default-draft",
+  "version": "0.1.0",
+  "status": "draft",
+  "calibration_required": true,
+  "theta": 0.5,
+  "portfolio_volatility_limit": 0.45,
+  "stress_week_loss_limit": -0.12,
+  "drawdown_risk_only_threshold": -0.25,
+  "near_event_trading_days": 10,
+  "rc_warning_multiplier": 1.2,
+  "rc_trigger_multiplier": 1.3
+}

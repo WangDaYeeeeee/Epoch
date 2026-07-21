@@ -1,0 +1,5 @@
+external_id,date,symbol,quantity,price,fee,currency
+tr-001,2026-07-06,NVDA,120,150,1,USD
+tr-002,2026-07-06,AVGO,80,275,1,USD
+tr-003,2026-07-07,MSFT,50,500,1,USD
+tr-004,2026-07-08,TSM,100,230,1,USD

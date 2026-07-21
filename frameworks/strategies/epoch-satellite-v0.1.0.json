@@ -1,0 +1,13 @@
+{
+  "$schema": "../schemas/strategy.schema.json",
+  "id": "epoch-satellite",
+  "version": "0.1.0",
+  "status": "draft",
+  "account_scope": ["futu_2189", "ibkr_8602"],
+  "portfolio": "satellite",
+  "benchmark": ".NDX",
+  "base_currency": "USD",
+  "reporting_currency": "USD",
+  "risk_currency": "USD",
+  "trading_capability": "read_only"
+}

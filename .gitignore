@@ -1,0 +1,15 @@
+/tmp/
+.env
+.env.local
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.tsbuildinfo
+node_modules/
+.pnpm-store/
+.next/
+coverage/
+data/raw/*
+!data/raw/.gitkeep
+postgres-data/

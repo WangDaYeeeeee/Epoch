@@ -18,3 +18,16 @@
 - [实施路线](docs/ROADMAP.md)：开发阶段、依赖关系和阶段验收标准
 - [视觉规范](docs/THEME.md)：网页配色方案与主题规范
 - [视觉资产](assets/)：项目使用的图片、图标与主题资源
+
+## 本地运行
+
+首个开发切片已使用 TypeScript 实现。它默认读取 `tmp/satellite-data` 中已清洗的本地卫星仓数据；该目录被 Git 忽略，不会提交真实账户数据。
+
+```bash
+pnpm install
+pnpm dev
+```
+
+打开 `http://localhost:3000`。组合 JSON API 位于 `GET /api/v1/portfolio`。
+
+也可以使用 `docker compose up --build` 一条命令启动 Web/API 与 PostgreSQL。当前页面包含 `.NDX` 对数净值比较、事件点、回撤深度和可拖拽时间范围；合成数据保留在 `data/demo`，仅作为后续确定性账本测试样本。

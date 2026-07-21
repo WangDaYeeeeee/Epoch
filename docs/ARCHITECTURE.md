@@ -82,11 +82,11 @@ Web UI 和 Agent Gateway 共享同一领域服务。Agent 不直接访问数据�
 | 层级 | 选择 | 说明 |
 |---|---|---|
 | Web UI | Next.js + TypeScript | Operations、Portfolio、Allocation & Risk、Journal |
-| API | Python + FastAPI | 领域接口、Agent Gateway 与数据服务 |
-| 计算 | Polars/Pandas + NumPy/SciPy | 组合、时间序列、优化与情景计算 |
+| API | Next.js Route Handlers + TypeScript | 领域接口、Agent Gateway 与数据服务；与 Web 共享类型 |
+| 计算 | TypeScript 确定性模块 | 首个切片的账本与组合计算；复杂数值模型可在 Phase 3 独立评估运行时 |
 | 数据库 | PostgreSQL | 事实、版本、计算结果和审计关系 |
 | 原始数据 | 本地对象目录 | 保存不可变外部响应与内容哈希 |
-| 图表 | ECharts | 金融时间序列、归因与风险解释 |
+| 图表 | Recharts | 金融时间序列、归因与风险解释 |
 | 调度 | 轻量任务调度 | 日终同步、每日计算和事件扫描 |
 | Agent 接口 | 本地 CLI/API + JSON Schema | 为单一通用 Agent 提供受限工具 |
 | 部署 | Docker Compose | 本机一条命令启动 |

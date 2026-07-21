@@ -1,0 +1,32 @@
+.brand { font-family: Montserrat, "Avenir Next", sans-serif; font-weight: 600; }
+.brand::after { display: none; }
+.position { grid-template-columns: 1fr auto; }
+.ticker { display: none; }
+.range-controls { display: flex; justify-content: flex-end; gap: 5px; margin: -45px 0 18px; }
+.range-controls button { border: 1px solid #2b2460; border-radius: 7px; background: #15103a; color: #7f7999; padding: 6px 9px; font-size: 10px; cursor: pointer; }
+.range-controls button:hover { color: #f3f1fb; border-color: #5b42e8; }
+.chart-label { display: flex; justify-content: space-between; color: #7f7999; font-size: 9px; letter-spacing: .06em; }
+.event-key { display: flex; justify-content: flex-end; gap: 15px; color: #7f7999; font-size: 9px; }
+.event-key i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
+.event-key .buy { background: #5bc59b; }
+.event-key .sell { background: #f07a89; }
+.event-key .cash { background: #6da8e8; }
+.event-key .transfer { background: #a99bff; }
+.performance-tooltip { min-width: 190px; max-width: 340px; padding: 12px 14px; border: 1px solid #2b2460; border-radius: 12px; background: rgba(21, 16, 58, .96); box-shadow: 0 16px 40px rgba(2, 1, 12, .42); }
+.performance-tooltip > strong { display: block; margin-bottom: 9px; color: #f3f1fb; font: 600 11px Montserrat; }
+.tooltip-series { display: grid; gap: 6px; }
+.tooltip-series span { display: grid; grid-template-columns: 7px 1fr auto; align-items: center; gap: 7px; color: #b5b0c9; font-size: 10px; }
+.tooltip-series i, .tooltip-events h4 i { width: 6px; height: 6px; border-radius: 50%; }
+.tooltip-series b { color: #b5b0c9; font-weight: 500; }
+.tooltip-events { margin-top: 10px; padding-top: 9px; border-top: 1px solid #2b2460; }
+.tooltip-events section + section { margin-top: 9px; }
+.tooltip-events h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 6px; color: #f3f1fb; font-size: 10px; font-weight: 600; }
+.tooltip-events p { margin: 3px 0 0; padding-left: 13px; color: #b5b0c9; font-size: 9px; line-height: 1.45; }
+.drawdown-title { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; padding-top: 20px; border-top: 1px solid #2b2460; }
+.drawdown-title div { display: grid; gap: 5px; }
+.drawdown-title strong { font: 600 14px Montserrat; }
+.drawdown-title small { font-size: 9px; color: #7f7999; }
+.drawdown-title > span { font: 600 13px Montserrat; color: #f07a89; }
+.brush-wrap { margin-top: 8px; padding: 12px 14px 0; background: rgba(8,5,29,.55); border-radius: 10px; }
+.brush-wrap > span { display: block; color: #7f7999; font-size: 9px; margin-bottom: 4px; }
+@media (max-width: 700px) { .range-controls { margin: 0 0 16px; justify-content: flex-start; flex-wrap: wrap; } }
