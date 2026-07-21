@@ -1,6 +1,6 @@
 # Epoch 技术架构
 
-状态：Draft v0.2
+状态：Draft v0.3
 日期：2026-07-21
 
 ## 1. 架构目标
@@ -18,9 +18,11 @@
 
 ## 2. 架构原则
 
-### 2.1 模块化单体
+### 2.1 单仓库与有限运行时边界
 
-第一版采用模块化单体，不采用微服务。模块通过显式的领域接口协作，不以分布式部署换取形式上的边界。
+产品与领域代码继续作为一个单仓库的模块化系统管理，不按业务名词拆分多个仓库或微服务。只在运行时、依赖和资源特征存在实质差异时建立进程边界：TypeScript 控制面负责事实、编排、审计和收口；Python Analytics Service 负责数值模型和组合风险计算。
+
+该边界是单个产品内的运行时隔离，不代表将 Epoch 演变为通用微服务系统。两端通过版本化的 JSON Schema 协作，不共享语言内部对象。
 
 ### 2.2 四类数据分离
 
@@ -64,18 +66,21 @@ IBKR / 交易所 / 公司文件 / 市场与事件数据
                          │
                PostgreSQL 领域模型
                          │
-        ┌─────────────┼─────────────┐
-        │                         │
-  Analytics Engine          Operations / Journal
-        │                         │
-   Policy Gate ──────────── Web UI
-        │                         │
-        └────── Agent Gateway ─────┘
-                         │
-               Codex / Claude 通用 Agent
+                 TypeScript 控制面
+        ┌──────────┼──────────┐
+        │          │          │
+     Web UI       Scheduler    Operations / Journal
+        │          │          │
+        │     版本化计算契约       │
+        │          ▼          │
+        │   Python Analytics Service
+        │          │
+        └──── Policy Gate ─── Agent Gateway
+                              │
+                    Codex / Claude 通用 Agent
 ```
 
-Web UI 和 Agent Gateway 共享同一领域服务。Agent 不直接访问数据库，也不自行实现风险公式或硬约束。
+Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化输入快照后调用 Analytics Service，验证返回结果并写入 `CalculationRun`。Analytics Service 不直接修改数据库，Agent 不直接访问数据库，也不自行实现风险公式或硬约束。
 
 ## 4. 技术选型
 
@@ -83,15 +88,17 @@ Web UI 和 Agent Gateway 共享同一领域服务。Agent 不直接访问数据�
 |---|---|---|
 | Web UI | Next.js + TypeScript | Operations、Portfolio、Allocation & Risk、Journal |
 | API | Next.js Route Handlers + TypeScript | 领域接口、Agent Gateway 与数据服务；与 Web 共享类型 |
-| 计算 | TypeScript 确定性模块 | 首个切片的账本与组合计算；复杂数值模型可在 Phase 3 独立评估运行时 |
+| 业务计算 | TypeScript 确定性模块 | 账本、NAV、输入快照、计算编排和 Policy Gate |
+| 量化计算 | Python Analytics Service | HAR、IV/Greeks、协方差、ERC/RC、CVaR、压力测试和回测 |
+| 计算契约 | JSON Schema + HTTP | TypeScript 与 Python 共享版本化输入输出，不共享数据库写权 |
 | 数据库 | PostgreSQL | 事实、版本、计算结果和审计关系 |
 | 原始数据 | 本地对象目录 | 保存不可变外部响应与内容哈希 |
 | 图表 | Recharts | 金融时间序列、归因与风险解释 |
 | 调度 | 轻量任务调度 | 日终同步、每日计算和事件扫描 |
 | Agent 接口 | 本地 CLI/API + JSON Schema | 为单一通用 Agent 提供受限工具 |
-| 部署 | Docker Compose | 本机一条命令启动 |
+| 部署 | Docker Compose | 单仓库、一条命令启动 Web、Scheduler、Analytics 和 PostgreSQL |
 
-具体 HAR 实现库与期权工具在模型细化后确定。架构通过稳定的预测接口、版本化参数和计算运行记录隔离具体库，不在产品层绑定某个实现。
+具体 HAR 实现库与期权工具在模型细化后确定。架构通过稳定的计算接口、版本化参数和计算运行记录隔离具体库，不在 TypeScript 产品层绑定某个 Python 实现。Python 计算核心保持为纯函数/可测试包，HTTP 层只负责契约校验、调用和错误封装。
 
 ## 5. 模块边界
 
@@ -123,6 +130,8 @@ Web UI 和 Agent Gateway 共享同一领域服务。Agent 不直接访问数据�
 - 指数隐波、隐含相关性、put skew、GEX 与其他市场结构指标。
 
 `analytics` 输出带单位的数值、质量状态和计算说明，不输出“应该买入/卖出”的语义判断。
+
+`analytics` 作为仅在内部网络暴露的无状态 Python 服务运行。它不持有券商凭证、不拥有领域数据库写权，不负责任务排期、幂等或最终决策。所有生产调用都由 Scheduler 提交冻结输入；命令行入口只用于开发、黄金样本重放和故障诊断。
 
 ### 5.6 policy
 
@@ -263,6 +272,22 @@ AgentRun
 
 ## 9. 风险计算管线
 
+### 9.0 服务调用与责任边界
+
+```text
+Scheduler 读取事实数据
+        ↓
+固化输入快照、as-of、策略/参数版本和 input_hash
+        ↓
+按版本化 JSON Schema 调用 Python Analytics Service
+        ↓
+校验数值、单位、model_version、质量和降级状态
+        ↓
+由 TypeScript 写入 CalculationRun 并执行 Policy Gate
+```
+
+Analytics Service 提供健康检查和版本化计算端点。日常秒级计算可同步返回；长时间回测应使用异步任务语义，不让单个 HTTP 请求无限等待。在出现实际并发需求前不引入 Redis、Celery 或通用消息队列。
+
 ### 9.1 输入与降级
 
 每个模型接口都必须定义：
@@ -402,13 +427,21 @@ Agent Gateway 提供的核心能力分为：
 ```text
 apps/
   web/
-  api/
 packages/
   domain/
-  analytics/
   policy/
   connectors/
   agent_gateway/
+services/
+  analytics/
+    pyproject.toml
+    src/
+      epoch_analytics/
+      epoch_analytics_service/
+    tests/
+    Dockerfile
+contracts/
+  analytics/
 frameworks/
   strategies/
   policies/
@@ -418,7 +451,6 @@ skills/
 tests/
   fixtures/
   reconciliation/
-  analytics/
   policy/
   agent/
 data/
@@ -426,7 +458,9 @@ data/
 docs/
 ```
 
-真实投资数据不进入 Git。仓库只保存脱敏、合成或公开测试数据。
+单一 Git 仓库同时保存 TypeScript 与 Python 代码；`pnpm-lock.yaml` 和 Python 依赖锁文件分别固化两个运行时，根级命令统一安装、测试、构建和启动。真实投资数据不进入 Git。仓库只保存脱敏、合成或公开测试数据。
+
+Docker Compose 的目标稳态拓扑为四个常驻服务：PostgreSQL、Web/API、Scheduler 和 Python Analytics；数据库迁移是启动时的一次性任务。所有组件仍由一条本地命令启动。
 
 ## 15. 官方接口参考
 

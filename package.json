@@ -4,9 +4,15 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "pnpm --filter @epoch/web dev",
+    "analytics:sync": "uv sync --locked --project services/analytics",
+    "analytics:dev": "uv run --project services/analytics epoch-analytics serve --reload",
+    "analytics:test": "uv run --project services/analytics pytest",
+    "analytics:lint": "uv run --project services/analytics ruff check services/analytics/src services/analytics/tests",
     "build": "pnpm --filter @epoch/web build",
-    "lint": "pnpm --filter @epoch/web lint",
-    "test": "pnpm --filter @epoch/web test",
+    "lint:web": "pnpm --filter @epoch/web lint",
+    "lint": "pnpm lint:web && pnpm analytics:lint",
+    "test:web": "pnpm --filter @epoch/web test",
+    "test": "pnpm test:web && pnpm analytics:test",
     "db:migrate": "pnpm --filter @epoch/web db:migrate",
     "scheduler": "pnpm --filter @epoch/web scheduler",
     "scheduler:once": "pnpm --filter @epoch/web scheduler:once"

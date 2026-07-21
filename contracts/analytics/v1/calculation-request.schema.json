@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://epoch.local/contracts/analytics/v1/calculation-request.schema.json",
+  "title": "Epoch analytics calculation request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "calculationId", "calculationType", "asOf", "inputHash", "codeVersion", "payload"],
+  "properties": {
+    "contractVersion": { "const": "1.0" },
+    "calculationId": { "type": "string", "format": "uuid" },
+    "calculationType": { "type": "string", "minLength": 1 },
+    "asOf": { "type": "string", "format": "date-time" },
+    "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "codeVersion": { "type": "string", "minLength": 1 },
+    "strategyVersion": { "type": ["string", "null"] },
+    "parameterSetVersion": { "type": ["string", "null"] },
+    "payload": { "type": "object" }
+  }
+}

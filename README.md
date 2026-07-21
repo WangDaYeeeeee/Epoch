@@ -21,27 +21,36 @@
 
 ## 本地运行
 
-Phase 0 已使用 TypeScript 实现。完整环境通过一条命令启动：
+Epoch 使用 TypeScript 控制面和独立 Python Analytics Service。完整环境通过一条命令启动：
 
 ```bash
 docker compose up --build
 ```
 
-打开 `http://localhost:3000`。启动链路会等待 PostgreSQL 就绪、幂等执行迁移，然后启动 Web/API 与轻量调度器。若存在 `tmp/satellite-data`，系统读取已清洗的本地卫星仓数据；该目录被 Git 忽略。若不存在，系统自动使用可重现的合成 Demo，因此新环境不依赖任何私人文件即可运行。
+打开 `http://localhost:3000`。启动链路会等待 PostgreSQL 和 Analytics 就绪、幂等执行迁移，然后启动 Web/API 与轻量调度器。Analytics 只在 Compose 内部网络暴露。若存在 `tmp/satellite-data`，系统读取已清洗的本地卫星仓数据；该目录被 Git 忽略。若不存在，系统自动使用可重现的合成 Demo。
 
-不使用 Docker 时，可以分别运行：
+不使用 Docker 时需要 pnpm 与 [uv](https://docs.astral.sh/uv/)，先安装两个运行时的依赖：
 
 ```bash
 pnpm install
+uv sync --locked --project services/analytics
+```
+
+然后分别运行：
+
+```bash
 pnpm db:migrate
 pnpm dev
 pnpm scheduler
+pnpm analytics:dev
 ```
 
 主要端点：
 
-- `GET /api/health`：数据库、迁移、数据来源与交易权限状态；
+- `GET /api/health`：数据库、Analytics、迁移、数据来源与交易权限状态；
 - `GET /api/v1/portfolio`：当前组合；
 - `GET /api/v1/calculations/demo`：从固定交易、现金流和价格重建的每日账本。
 
-Phase 0 的范围与验收证据见 [docs/PHASE0.md](docs/PHASE0.md)，数据约定见 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)。
+Phase 0 的范围与验收证据见 [docs/reviews/PHASE_0.md](docs/reviews/PHASE_0.md)，数据约定见 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)。
+
+Python Analytics 当前已完成服务骨架、共享契约、健康检查和端到端契约检查；HAR、ERC、CVaR 等生产量化模型仍按 Phase 3 路线实现。

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://epoch.local/contracts/analytics/v1/calculation-response.schema.json",
+  "title": "Epoch analytics calculation response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "calculationId", "calculationType", "asOf", "inputHash", "engineVersion", "modelVersion", "status", "output", "diagnostics", "warnings", "durationMs"],
+  "properties": {
+    "contractVersion": { "const": "1.0" },
+    "calculationId": { "type": "string", "format": "uuid" },
+    "calculationType": { "type": "string", "minLength": 1 },
+    "asOf": { "type": "string", "format": "date-time" },
+    "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "modelVersion": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["succeeded", "degraded", "failed"] },
+    "output": { "type": "object" },
+    "diagnostics": { "type": "object" },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "durationMs": { "type": "integer", "minimum": 0 }
+  }
+}

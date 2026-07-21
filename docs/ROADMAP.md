@@ -1,6 +1,6 @@
 # Epoch 实施路线
 
-状态：Draft v0.3
+状态：Draft v0.4
 日期：2026-07-21
 
 ## 1. 文档职责
@@ -20,12 +20,13 @@
 5. Agent 只产生研究、判断和意向，不替代计算引擎、Policy Gate 或最终决定；
 6. 全程保持券商交易权限只读，真实交易在系统外手工执行；
 7. 不因未来可能商业化或拆分多 Agent 而增加当前复杂度。
+8. 保持单一 Git 仓库和一条本地启动链路；TypeScript 控制面与 Python 计算面以版本化契约隔离。
 
 ## 3. 阶段路线
 
 ### Phase 0：项目基础与策略骨架
 
-状态：已完成（2026-07-21），验收记录见 [PHASE0.md](PHASE0.md)。
+状态：已完成（2026-07-21），验收记录见 [reviews/PHASE_0.md](reviews/PHASE_0.md)。
 
 目标：建立可重复开发环境，将首个卫星仓的口径、策略与参数纳入版本管理。
 
@@ -86,6 +87,7 @@
 - 行业、地域、币种、主题和发行人穿透；
 - 持仓重叠、收益归因和风险来源视图；
 - 数据过期、连接状态与最后可信快照。
+- Analytics 输入快照与输入/输出 JSON Schema v1，在风险模型实现前固化日期、单位、精度、缺失值和版本约定。
 
 完成标准：
 
@@ -105,6 +107,8 @@
 交付：
 
 - `CalculationRun` 与输入/输出快照；
+- 单仓库内的 Python Analytics Service、内部健康检查与版本化计算 API；
+- TypeScript Scheduler 到 Analytics Service 的超时、重试、幂等、契约校验和失败记录；
 - 历史波动率、协方差、相关性和基线 HAR-RV；
 - ERC、RC、组合波动率与观点权重合成；
 - 历史 CVaR 与历史崩盘周压力情景；
@@ -122,6 +126,7 @@
 - HAR-IV-J 训练、预测、回测和模型版本；
 - IV 缺失、期权不活跃、新上市标的与不适用品种的降级/拒绝策略；
 - 预测波动率与实际已实现波动率的误差记录。
+- Python 纯计算包、HTTP 服务外壳与黄金样本重放 CLI 共享同一模型实现。
 
 完成标准：
 
@@ -130,6 +135,7 @@
 - Policy Gate 可对任意目标持仓输出逐条、可解释的校验结果；
 - 数据或模型不可用时显示降级状态，不伪装成正常预测；
 - 关闭外部 Agent 后，整个计算与校验管线仍正常运行。
+- 单条 Docker Compose 命令可启动 PostgreSQL、Web/API、Scheduler 和 Analytics 四个常驻服务，Analytics 不对主机公开端口。
 
 ### Phase 4：Operations、事件视界与 Journal
 
@@ -232,7 +238,7 @@ Phase 5  通用 Agent
 
 可并行的工作：
 
-- HAR-IV-J 方法细化、数据源验证和期权数据积累可从 Phase 0 开始，但只在 Phase 3 进入生产计算；
+- HAR-IV-J 方法细化、Python 依赖验证和期权数据积累可提前开始，但只在 Phase 3 进入生产计算；
 - 策略 Schema、Agent 输出 Schema 和回归评估集可与 Phase 2–4 并行设计；
 - 事件日历数据源可与 Phase 3 并行接入；
 - Agent 不应早于核心领域对象、确定性计算和 Policy Gate。

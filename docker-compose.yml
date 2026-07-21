@@ -23,12 +23,24 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  analytics:
+    build:
+      context: .
+      dockerfile: services/analytics/Dockerfile
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
     environment:
       DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
+      ANALYTICS_URL: http://analytics:8000
       EPOCH_DATA_ROOT: /data/satellite-data
     ports: ["127.0.0.1:3000:3000"]
     volumes:
@@ -40,6 +52,7 @@ services:
       retries: 12
     depends_on:
       migrate: { condition: service_completed_successfully }
+      analytics: { condition: service_healthy }
 
   scheduler:
     build:
@@ -47,10 +60,12 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
+      ANALYTICS_URL: http://analytics:8000
       SCHEDULER_POLL_MS: "30000"
     command: ["pnpm", "scheduler"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      analytics: { condition: service_healthy }
 
 volumes:
   epoch-postgres:

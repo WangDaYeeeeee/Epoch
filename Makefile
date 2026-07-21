@@ -1,10 +1,20 @@
-.PHONY: dev web migrate scheduler scheduler-once test lint build verify
+.PHONY: setup dev web analytics analytics-sync migrate scheduler scheduler-once test test-web test-analytics lint build verify
+
+setup:
+	pnpm install --frozen-lockfile
+	uv sync --locked --project services/analytics
 
 dev:
 	docker compose up --build
 
 web:
 	pnpm --filter @epoch/web dev
+
+analytics:
+	uv run --project services/analytics epoch-analytics serve --reload
+
+analytics-sync:
+	uv sync --locked --project services/analytics
 
 migrate:
 	pnpm db:migrate
@@ -16,7 +26,13 @@ scheduler-once:
 	pnpm scheduler:once
 
 test:
-	pnpm --filter @epoch/web test
+	pnpm test
+
+test-web:
+	pnpm test:web
+
+test-analytics:
+	pnpm analytics:test
 
 lint:
 	pnpm lint

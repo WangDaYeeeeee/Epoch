@@ -2,6 +2,12 @@
 .next
 node_modules
 .pnpm-store
+.venv
+services/analytics/.venv
+services/analytics/.pytest_cache
+services/analytics/.ruff_cache
+**/__pycache__
+*.pyc
 tmp
 data/raw/*
 *.tsbuildinfo

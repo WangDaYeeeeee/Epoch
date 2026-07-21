@@ -11,7 +11,7 @@
 | Web、API、PostgreSQL 骨架 | Next.js Web 与 Route Handlers、PostgreSQL 17 |
 | 数据库迁移 | 带内容哈希、advisory lock 和版本表的幂等迁移执行器 |
 | 轻量任务调度 | PostgreSQL 持久化任务、advisory lock、单次与常驻运行模式 |
-| 数据约定 | [CONVENTIONS.md](CONVENTIONS.md) 与对应 TypeScript 类型/测试 |
+| 数据约定 | [CONVENTIONS.md](../CONVENTIONS.md) 与对应 TypeScript 类型/测试 |
 | 合成 Demo | 交易、现金流、价格，以及确定性每日账本计算 |
 | 策略与参数版本 | JSON Schema、内容哈希、数据库种子和只读应用边界 |
 | 个人配置 | `futu_2189` + `ibkr_8602`、`.NDX`、USD 统一口径 |
