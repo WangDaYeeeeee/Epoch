@@ -3,7 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { assertCurrency, assertIsoDate } from "../domain/conventions";
 import { CASH_EQUIVALENT_INSTRUMENTS, isDerivativeInstrumentId, marketDataRequirement, type MarketDataRequirement } from "../domain/market-data";
-import { ledgerReplayReadiness, reconcileCashEndpoints, type CashEndpointReconciliation, type LedgerReplayReadiness } from "../domain/ledger-replay";
+import { ledgerReplayReadiness, reconcileCashEndpoints, replayLedgerDaily, type CashEndpointReconciliation, type LedgerReplayReadiness } from "../domain/ledger-replay";
+import { valueDailyLedger } from "../domain/ledger-valuation";
 import { parseCsv } from "./csv";
 
 export const BASELINE_FILES = ["transactions.csv", "positions.csv", "performance.csv"] as const;
@@ -16,7 +17,19 @@ export type MarketDataCoverage = {
   requiredSecurities: number; coveredSecurities: number; missingInstrumentIds: string[];
   requiredFxPairs: number; coveredFxPairs: number; priceObservations: number; splitEvents: number;
 };
+export type DailyLedgerReplaySummary = {
+  days: number; transactionEventsApplied: number; splitEventsApplied: number;
+  terminalCashAccounts: number; terminalPositionAccounts: number;
+  terminalTransit: Record<string, number>;
+};
+export type DailyLedgerValuationSummary = {
+  totalDays: number; valuedDays: number; accountedDays: number; residualBridgeDays: number; missingPriceDays: number;
+  maxAbsoluteResidualBridgeUsd: number;
+  maxAbsoluteDifferenceUsd: number; maxAbsoluteRelativeDifference: number; terminalDifferenceUsd: number | null;
+  missingInstrumentIds: string[];
+};
 const ALLOWED_ACTIONS = new Set(["buy", "sell", "deposit", "withdrawal", "dividend", "fee", "interest", "tax", "transfer_in", "transfer_out", "fx_buy", "fx_sell", "adjustment_in", "adjustment_out", "other"]);
+const DAILY_VALUATION_SOURCE_BASIS_TOLERANCE = 0.0075;
 
 type ValidationEntry = {
   selected_rows: number;
@@ -48,8 +61,10 @@ export type BaselineDataset = {
   marketDataCoverage: MarketDataCoverage;
   ledgerReplayReadiness: LedgerReplayReadiness;
   cashEndpointReconciliation: CashEndpointReconciliation;
+  dailyLedgerReplay: DailyLedgerReplaySummary;
+  dailyLedgerValuation: DailyLedgerValuationSummary;
   healthy: boolean;
-  ledgerReconciled: false;
+  ledgerReconciled: boolean;
 };
 
 export function reconcileReportedValuations(rows: Row[]): ValuationCoverage {
@@ -299,9 +314,34 @@ export function loadBaselineDataset(root: string): BaselineDataset {
   const marketRequirement = marketDataRequirement(rows["transactions.csv"], rows["performance.csv"]);
   const marketCoverage = loadMarketDataCoverage(root, marketRequirement);
   const splitPath = resolve(root, "normalized/market-splits.csv");
-  const replayReadiness = ledgerReplayReadiness(rows["transactions.csv"], existsSync(splitPath) ? parseCsv(readFileSync(splitPath, "utf8")) : []);
+  const pricePath = resolve(root, "normalized/market-prices.csv");
+  const splits = existsSync(splitPath) ? parseCsv(readFileSync(splitPath, "utf8")) : [];
+  const prices = existsSync(pricePath) ? parseCsv(readFileSync(pricePath, "utf8")) : [];
+  const replayReadiness = ledgerReplayReadiness(rows["transactions.csv"], splits);
   const cashEndpointReconciliation = reconcileCashEndpoints(rows["transactions.csv"], rows["positions.csv"]);
-  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, valuationCoverage, marketDataRequirement: marketRequirement, marketDataCoverage: marketCoverage, ledgerReplayReadiness: replayReadiness, cashEndpointReconciliation, healthy: false, ledgerReconciled: false };
+  const dailyReplay = replayLedgerDaily(rows["transactions.csv"], splits, rows["performance.csv"].map((row) => row.date));
+  const dailyValuation = valueDailyLedger(dailyReplay.states, prices, rows["transactions.csv"], rows["performance.csv"]);
+  const terminalState = dailyReplay.states.at(-1);
+  const dailyLedgerReplay: DailyLedgerReplaySummary = {
+    days: dailyReplay.days, transactionEventsApplied: dailyReplay.transactionEventsApplied,
+    splitEventsApplied: dailyReplay.splitEventsApplied,
+    terminalCashAccounts: Object.keys(terminalState?.cash ?? {}).length,
+    terminalPositionAccounts: Object.values(terminalState?.quantities ?? {}).filter((quantity) => Math.abs(quantity) > 1e-8).length,
+    terminalTransit: Object.fromEntries(Object.entries(terminalState?.transit ?? {}).filter(([, amount]) => Math.abs(amount) > 1e-8)),
+  };
+  const dailyLedgerValuation: DailyLedgerValuationSummary = {
+    totalDays: dailyValuation.totalDays,
+    valuedDays: dailyValuation.valuedDays,
+    accountedDays: dailyValuation.accountedDays,
+    residualBridgeDays: dailyValuation.residualBridgeDays,
+    missingPriceDays: dailyValuation.missingPriceDays,
+    maxAbsoluteResidualBridgeUsd: dailyValuation.maxAbsoluteResidualBridgeUsd,
+    maxAbsoluteDifferenceUsd: dailyValuation.maxAbsoluteDifferenceUsd,
+    maxAbsoluteRelativeDifference: dailyValuation.maxAbsoluteRelativeDifference,
+    terminalDifferenceUsd: dailyValuation.terminalDifferenceUsd,
+    missingInstrumentIds: dailyValuation.missingInstrumentIds,
+  };
+  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, valuationCoverage, marketDataRequirement: marketRequirement, marketDataCoverage: marketCoverage, ledgerReplayReadiness: replayReadiness, cashEndpointReconciliation, dailyLedgerReplay, dailyLedgerValuation, healthy: false, ledgerReconciled: false };
   validateKeys(rows, checks);
   validateScope(dataset);
   validatePerformanceChain(dataset);
@@ -312,13 +352,30 @@ export function loadBaselineDataset(root: string): BaselineDataset {
     status: marketCoverage.missingInstrumentIds.length || marketCoverage.coveredFxPairs !== marketCoverage.requiredFxPairs ? "pending" : "passed",
     detail: `${marketCoverage.coveredSecurities}/${marketCoverage.requiredSecurities} canonical securities and ${marketCoverage.coveredFxPairs}/${marketCoverage.requiredFxPairs} FX pairs covered by ${marketCoverage.priceObservations} observations; missing ${marketCoverage.missingInstrumentIds.join(", ") || "none"}`,
   });
+  addCheck(dataset.checks, "ledger:daily-state-replay", dailyReplay.days === rows["performance.csv"].length && dailyReplay.transactionEventsApplied === rows["transactions.csv"].length && dailyReplay.splitEventsApplied === marketCoverage.splitEvents, `${dailyReplay.days} daily states; ${dailyReplay.transactionEventsApplied}/${rows["transactions.csv"].length} transactions and ${dailyReplay.splitEventsApplied}/${marketCoverage.splitEvents} splits applied`);
+  dataset.checks.push({
+    name: "ledger:daily-valuation",
+    status: dailyValuation.accountedDays === dailyValuation.totalDays ? "passed" : "pending",
+    detail: `${dailyValuation.accountedDays}/${dailyValuation.totalDays} days accounted; ${dailyValuation.valuedDays} independently valued and ${dailyValuation.residualBridgeDays} residual-backed for ${dailyValuation.missingInstrumentIds.join(", ") || "no instruments"}`,
+  });
   addCheck(dataset.checks, "ledger:replay-input-classification", replayReadiness.classified === replayReadiness.total, `${replayReadiness.classified}/${replayReadiness.total} events mapped to replay inputs; ${replayReadiness.positionImpactingSplits}/${replayReadiness.splitEvents} split events impact open positions`);
   dataset.checks.push({
     name: "ledger:cash-endpoint-reconciliation",
     status: cashEndpointReconciliation.differences.length ? "pending" : "passed",
     detail: `${cashEndpointReconciliation.matched}/${cashEndpointReconciliation.endpoints} latest account-currency cash endpoints matched; ${cashEndpointReconciliation.differences.length} differences require source classification`,
   });
-  dataset.checks.push({ name: "ledger:full-reconciliation", status: "pending", detail: marketCoverage.missingInstrumentIds.length ? "market-data coverage is not complete" : "daily ledger replay is not complete" });
+  dataset.ledgerReconciled = dailyValuation.accountedDays === dailyValuation.totalDays
+    && dailyValuation.maxAbsoluteRelativeDifference <= DAILY_VALUATION_SOURCE_BASIS_TOLERANCE
+    && cashEndpointReconciliation.differences.length === 0
+    && positionReconciliation.differences.length === 0
+    && eventCoverage.classified === eventCoverage.total;
+  dataset.checks.push({
+    name: "ledger:full-reconciliation",
+    status: dataset.ledgerReconciled ? "passed" : "pending",
+    detail: dataset.ledgerReconciled
+      ? `qualified reconciliation: ${dailyValuation.valuedDays} independent days within ${(dailyValuation.maxAbsoluteRelativeDifference * 100).toFixed(3)}% maximum source-basis difference; ${dailyValuation.residualBridgeDays} explicitly residual-backed days`
+      : `daily valuation exceeds the ${(DAILY_VALUATION_SOURCE_BASIS_TOLERANCE * 100).toFixed(2)}% source-basis tolerance or has unresolved ledger differences`,
+  });
   addCheck(dataset.checks, "positions:reported-base-valuations", valuationCoverage.fxReconciled === valuationCoverage.withFx, `${valuationCoverage.fxReconciled}/${valuationCoverage.withFx} available base-currency valuations reconcile within source precision`);
   dataset.checks.push({ name: "positions:fx-coverage", status: valuationCoverage.missingFx ? "pending" : "passed", detail: `${valuationCoverage.withFx}/${valuationCoverage.total} rows carry explicit broker base-currency FX; ${valuationCoverage.missingFx} rows missing` });
   dataset.checks.push({

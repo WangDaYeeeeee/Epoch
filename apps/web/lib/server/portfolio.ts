@@ -30,8 +30,10 @@ export function loadPortfolio(root = resolveDataRoot()): PortfolioPayload {
   }, {
     source: "private-staging",
     healthy: baseline.healthy,
+    ledgerBalanced: baseline.ledgerReconciled,
+    reconciliationDifference: baseline.dailyLedgerValuation.maxAbsoluteDifferenceUsd,
     message: baseline.healthy
-      ? `已验证 ${baseline.rows["performance.csv"].length} 个连续绩效点与完整净值链；逐日账本对账待价格、汇率与公司行动补齐`
+      ? `已回放 ${baseline.dailyLedgerReplay.days} 天与 ${baseline.dailyLedgerReplay.transactionEventsApplied} 条事件；${baseline.dailyLedgerValuation.accountedDays}/${baseline.dailyLedgerValuation.totalDays} 天估值已入账（${baseline.dailyLedgerValuation.valuedDays} 天独立估值，${baseline.dailyLedgerValuation.residualBridgeDays} 天残差桥接）`
       : `基线数据存在 ${baseline.checks.filter((check) => check.status === "failed").length} 项校验失败`,
     positionReconciliation: baseline.positionReconciliation,
     assetReturnsReconciled: baseline.checks.some((check) => check.name === "performance:asset-return-reconciliation" && check.status === "passed"),
@@ -41,12 +43,16 @@ export function loadPortfolio(root = resolveDataRoot()): PortfolioPayload {
     marketDataCoverage: baseline.marketDataCoverage,
     ledgerReplayReadiness: baseline.ledgerReplayReadiness,
     cashEndpointReconciliation: baseline.cashEndpointReconciliation,
+    dailyLedgerReplay: baseline.dailyLedgerReplay,
+    dailyLedgerValuation: baseline.dailyLedgerValuation,
   });
 }
 
 function buildPrivatePortfolio({ performance, transactions, positions }: PrivatePortfolioRows, health: {
   source: string;
   healthy: boolean;
+  ledgerBalanced?: boolean;
+  reconciliationDifference?: number;
   message: string;
   positionReconciliation?: PositionReconciliation;
   assetReturnsReconciled?: boolean;
@@ -56,6 +62,8 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
   marketDataCoverage?: PortfolioPayload["health"]["marketDataCoverage"];
   ledgerReplayReadiness?: PortfolioPayload["health"]["ledgerReplayReadiness"];
   cashEndpointReconciliation?: PortfolioPayload["health"]["cashEndpointReconciliation"];
+  dailyLedgerReplay?: PortfolioPayload["health"]["dailyLedgerReplay"];
+  dailyLedgerValuation?: PortfolioPayload["health"]["dailyLedgerValuation"];
 }): PortfolioPayload {
   let benchmark = 100, portfolioPeak = 0, benchmarkPeak = 0;
   const series = performance.map((row, index) => {
@@ -112,8 +120,8 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
       .sort((left, right) => right.marketValue - left.marketValue),
     health: {
       status: health.healthy ? "healthy" : "warning",
-      ledgerBalanced: false,
-      reconciliationDifference: 0,
+      ledgerBalanced: health.ledgerBalanced ?? false,
+      reconciliationDifference: health.reconciliationDifference ?? 0,
       source: health.source,
       message: health.message,
       positionReconciliation: health.positionReconciliation,
@@ -124,6 +132,8 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
       marketDataCoverage: health.marketDataCoverage,
       ledgerReplayReadiness: health.ledgerReplayReadiness,
       cashEndpointReconciliation: health.cashEndpointReconciliation,
+      dailyLedgerReplay: health.dailyLedgerReplay,
+      dailyLedgerValuation: health.dailyLedgerValuation,
     },
   };
 }
@@ -181,6 +191,8 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     return buildPrivatePortfolio({ performance, transactions, positions }, {
       source: "database-baseline",
       healthy: true,
+      ledgerBalanced: stagedBaseline?.ledgerReconciled ?? false,
+      reconciliationDifference: stagedBaseline?.dailyLedgerValuation.maxAbsoluteDifferenceUsd ?? 0,
       message: `PostgreSQL 已加载 ${transactions.length} 条账本事件、${positions.length} 条持仓快照和 ${performance.length} 个连续绩效点；仓位数量 ${positionReconciliation.matched}/${positionReconciliation.comparisons} 项吻合，${positionReconciliation.differences.length} 项待解释（已处理 ${positionReconciliation.timezoneAdjustedTransactions} 笔跨时区边界交易）`,
       positionReconciliation,
       assetReturnsReconciled: performanceReconciliation.assetReturnsReconciled,
@@ -190,6 +202,8 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
       marketDataCoverage: stagedBaseline?.marketDataCoverage,
       ledgerReplayReadiness: stagedBaseline?.ledgerReplayReadiness,
       cashEndpointReconciliation: stagedBaseline?.cashEndpointReconciliation,
+      dailyLedgerReplay: stagedBaseline?.dailyLedgerReplay,
+      dailyLedgerValuation: stagedBaseline?.dailyLedgerValuation,
     });
   });
 }

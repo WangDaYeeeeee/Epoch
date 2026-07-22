@@ -20,6 +20,17 @@ export type PortfolioPayload = {
       endpoints: number; matched: number;
       differences: { accountId: string; currency: string; date: string; replayed: number; reported: number; difference: number }[];
     };
+    dailyLedgerReplay?: {
+      days: number; transactionEventsApplied: number; splitEventsApplied: number;
+      terminalCashAccounts: number; terminalPositionAccounts: number;
+      terminalTransit: Record<string, number>;
+    };
+    dailyLedgerValuation?: {
+      totalDays: number; valuedDays: number; accountedDays: number; residualBridgeDays: number; missingPriceDays: number;
+      maxAbsoluteResidualBridgeUsd: number;
+      maxAbsoluteDifferenceUsd: number; maxAbsoluteRelativeDifference: number; terminalDifferenceUsd: number | null;
+      missingInstrumentIds: string[];
+    };
     positionReconciliation?: {
       intervals: number;
       comparisons: number;

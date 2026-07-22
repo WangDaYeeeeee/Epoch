@@ -6,7 +6,7 @@ import { BASELINE_FILES, loadBaselineDataset, type BaselineDataset } from "./bas
 
 export type BaselineImportResult = {
   healthy: boolean;
-  ledgerReconciled: false;
+  ledgerReconciled: boolean;
   imports: Record<string, { rawImportId: string; duplicate: boolean; rows: number }>;
 };
 
@@ -96,6 +96,6 @@ export async function importBaselineDataset(sql: Sql, root: string): Promise<Bas
     }
     imports["performance.csv"] = { rawImportId: performanceFile.id, duplicate: performanceFile.duplicate, rows: performanceFile.duplicate ? 0 : dataset.rows["performance.csv"].length };
 
-    return { healthy: dataset.healthy, ledgerReconciled: false, imports };
+    return { healthy: dataset.healthy, ledgerReconciled: dataset.ledgerReconciled, imports };
   });
 }

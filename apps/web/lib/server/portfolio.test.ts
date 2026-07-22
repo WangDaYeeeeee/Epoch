@@ -34,6 +34,13 @@ describe("staged satellite portfolio", () => {
       splitEvents: 6, positionImpactingSplits: 0,
     });
     expect(payload.health.cashEndpointReconciliation).toMatchObject({ endpoints: 4, matched: 4, differences: [] });
+    expect(payload.health.dailyLedgerReplay).toMatchObject({ days: 545, transactionEventsApplied: 536, splitEventsApplied: 6 });
+    expect(payload.health.dailyLedgerValuation).toMatchObject({
+      totalDays: 545, valuedDays: 467, accountedDays: 545, residualBridgeDays: 78, missingPriceDays: 78,
+      missingInstrumentIds: ["REPORTING_SNAPSHOT_TIMING", "SUBACCOUNT:7313", "US:TCOM260220P65000", "XHKG:POP260629C380000"],
+    });
+    expect(payload.health.ledgerBalanced).toBe(true);
+    expect(payload.health.reconciliationDifference).toBeCloseTo(245.6390597563, 8);
     const cashDifferences = payload.health.cashEndpointReconciliation?.differences ?? [];
     expect(cashDifferences.find((item) => item.currency === "HKD")).toBeUndefined();
     expect(cashDifferences.find((item) => item.currency === "USD")).toBeUndefined();
