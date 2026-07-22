@@ -1,4 +1,4 @@
-export function parseCsv(text: string): Record<string, string>[] {
+export function parseCsvRows(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [], field = "", quoted = false;
   for (let index = 0; index < text.length; index += 1) {
@@ -13,6 +13,12 @@ export function parseCsv(text: string): Record<string, string>[] {
     } else field += char;
   }
   if (field || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+export function parseCsv(text: string): Record<string, string>[] {
+  const rows = parseCsvRows(text);
   const [headers, ...values] = rows;
+  if (!headers) return [];
   return values.map((valuesRow) => Object.fromEntries(headers.map((header, index) => [header.replace(/^\uFEFF/, ""), valuesRow[index] ?? ""])));
 }

@@ -4,6 +4,7 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "pnpm --filter @epoch/web dev",
+    "dev:local": "bash scripts/dev-local.sh",
     "analytics:sync": "uv sync --locked --project services/analytics",
     "analytics:dev": "uv run --project services/analytics epoch-analytics serve --reload",
     "analytics:test": "uv run --project services/analytics pytest",
@@ -14,6 +15,9 @@
     "test:web": "pnpm --filter @epoch/web test",
     "test": "pnpm test:web && pnpm analytics:test",
     "db:migrate": "pnpm --filter @epoch/web db:migrate",
+    "baseline:check": "pnpm --filter @epoch/web baseline:check",
+    "baseline:import": "pnpm --filter @epoch/web baseline:import",
+    "import:flex": "pnpm --filter @epoch/web import:flex",
     "scheduler": "pnpm --filter @epoch/web scheduler",
     "scheduler:once": "pnpm --filter @epoch/web scheduler:once"
   }

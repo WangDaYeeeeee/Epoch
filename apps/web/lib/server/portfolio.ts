@@ -1,10 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { Sql } from "postgres";
 import type { PortfolioPayload } from "@/lib/types";
+import { loadBaselineDataset, reconcilePositionQuantities } from "./baseline-data";
 import { parseCsv } from "./csv";
+import { createDatabaseClient } from "./database";
 import { calculateDemoLedger } from "./demo-ledger";
 
 type Row = Record<string, string>;
+type PrivatePortfolioRows = { performance: Row[]; transactions: Row[]; positions: Row[] };
 const readRows = (path: string) => parseCsv(readFileSync(path, "utf8"));
 const actionNames: Record<string, string> = { buy: "买入", sell: "卖出", deposit: "入金", withdrawal: "出金", transfer_in: "转入", transfer_out: "转出" };
 
@@ -16,9 +20,25 @@ export function resolveDataRoot(): string | null {
 
 export function loadPortfolio(root = resolveDataRoot()): PortfolioPayload {
   if (!root || !existsSync(resolve(root, "validation.json"))) return loadDemoPortfolio();
-  const performance = readRows(resolve(root, "normalized/performance.csv"));
-  const transactions = readRows(resolve(root, "normalized/transactions.csv"));
-  const positions = readRows(resolve(root, "normalized/positions.csv"));
+  const baseline = loadBaselineDataset(root);
+  return buildPrivatePortfolio({
+    performance: readRows(resolve(root, "normalized/performance.csv")),
+    transactions: readRows(resolve(root, "normalized/transactions.csv")),
+    positions: readRows(resolve(root, "normalized/positions.csv")),
+  }, {
+    source: "private-staging",
+    healthy: baseline.healthy,
+    message: baseline.healthy
+      ? `已验证 ${baseline.rows["performance.csv"].length} 个连续绩效点与完整净值链；逐日账本对账待价格、汇率与公司行动补齐`
+      : `基线数据存在 ${baseline.checks.filter((check) => check.status === "failed").length} 项校验失败`,
+  });
+}
+
+function buildPrivatePortfolio({ performance, transactions, positions }: PrivatePortfolioRows, health: {
+  source: string;
+  healthy: boolean;
+  message: string;
+}): PortfolioPayload {
   let benchmark = 100, portfolioPeak = 0, benchmarkPeak = 0;
   const series = performance.map((row, index) => {
     const portfolio = Number(row.nav);
@@ -69,8 +89,82 @@ export function loadPortfolio(root = resolveDataRoot()): PortfolioPayload {
       .filter((row) => !["cash", "other"].includes(row.category))
       .map((row) => ({ symbol: row.ticker, name: row.name, quantity: Number(row.quantity), marketValue: valueInUsd(row), currency: row.currency }))
       .sort((left, right) => right.marketValue - left.marketValue),
-    health: { status: "healthy", ledgerBalanced: false, reconciliationDifference: 0, source: "private-staging", message: `已加载 ${performance.length} 个连续绩效点，账户边界与迁移链路验证通过` },
+    health: {
+      status: health.healthy ? "healthy" : "warning",
+      ledgerBalanced: false,
+      reconciliationDifference: 0,
+      source: health.source,
+      message: health.message,
+    },
   };
+}
+
+export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayload | null> {
+  return sql.begin(async (transaction) => {
+    const performance = await transaction<Row[]>`
+      SELECT snapshot_date::text AS date, portfolio_id, total_assets::text, COALESCE(cash::text, '') AS cash,
+             net_external_flow::text, currency, nav::text, COALESCE(period_return::text, '') AS period_return,
+             benchmark, COALESCE(benchmark_return::text, '') AS benchmark_return, source
+      FROM reported_performance_snapshot
+      WHERE raw_import_id = (
+        SELECT id FROM raw_import
+        WHERE source = 'normalized_satellite_baseline' AND source_id = 'normalized/performance.csv'
+        ORDER BY recorded_at DESC, id DESC LIMIT 1
+      )
+      ORDER BY snapshot_date
+    `;
+    if (!performance.length) return null;
+    const transactions = await transaction<Row[]>`
+      SELECT transaction_id, effective_date::text AS date, account_id, COALESCE(instrument_id, '') AS instrument_id,
+             action, COALESCE(quantity::text, '') AS quantity, COALESCE(price::text, '') AS price, currency,
+             COALESCE(fees::text, '') AS fees, COALESCE(tax::text, '') AS tax,
+             COALESCE(cash_amount::text, '') AS cash_amount, external_flow::text, source, COALESCE(note, '') AS note
+      FROM normalized_ledger_event
+      WHERE raw_import_id = (
+        SELECT id FROM raw_import
+        WHERE source = 'normalized_satellite_baseline' AND source_id = 'normalized/transactions.csv'
+        ORDER BY recorded_at DESC, id DESC LIMIT 1
+      )
+      ORDER BY effective_date, transaction_id
+    `;
+    const positions = await transaction<Row[]>`
+      SELECT snapshot_date::text AS date, account_id, instrument_id, ticker, name, category,
+             quantity::text, price::text, market_value::text, currency, COALESCE(cost_basis::text, '') AS cost_basis,
+             COALESCE(fx_to_cny::text, '') AS fx_to_cny, COALESCE(market_value_cny::text, '') AS market_value_cny, source
+      FROM reported_position_snapshot
+      WHERE raw_import_id = (
+        SELECT id FROM raw_import
+        WHERE source = 'normalized_satellite_baseline' AND source_id = 'normalized/positions.csv'
+        ORDER BY recorded_at DESC, id DESC LIMIT 1
+      )
+      ORDER BY snapshot_date, account_id, instrument_id
+    `;
+    const positionReconciliation = reconcilePositionQuantities(transactions, positions);
+    return buildPrivatePortfolio({ performance, transactions, positions }, {
+      source: "database-baseline",
+      healthy: true,
+      message: `PostgreSQL 已加载 ${transactions.length} 条账本事件、${positions.length} 条持仓快照和 ${performance.length} 个连续绩效点；仓位数量 ${positionReconciliation.matched}/${positionReconciliation.comparisons} 项吻合，${positionReconciliation.differences.length} 项待解释（已处理 ${positionReconciliation.timezoneAdjustedTransactions} 笔跨时区边界交易）`,
+    });
+  });
+}
+
+export async function loadPortfolioPreferDatabase(): Promise<PortfolioPayload> {
+  const sql = createDatabaseClient();
+  try {
+    return await loadPortfolioFromDatabase(sql) ?? loadPortfolio();
+  } catch {
+    const fallback = loadPortfolio();
+    return {
+      ...fallback,
+      health: {
+        ...fallback.health,
+        status: "warning",
+        message: `PostgreSQL 暂不可用，已降级读取${fallback.health.source === "private-staging" ? "本地清洗基线" : "合成数据"}；${fallback.health.message}`,
+      },
+    };
+  } finally {
+    await sql.end();
+  }
 }
 
 function loadDemoPortfolio(): PortfolioPayload {

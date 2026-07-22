@@ -10,6 +10,9 @@ export async function GET() {
   try {
     await sql`SELECT 1`;
     const [migration] = await sql<{ count: number }[]>`SELECT count(*)::int AS count FROM schema_migration`;
+    const [baseline] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM raw_import WHERE source = 'normalized_satellite_baseline'
+    `;
     let analytics: { status: "connected"; version: string } | { status: "unavailable"; detail: string };
     try {
       const health = await getAnalyticsHealth();
@@ -22,7 +25,7 @@ export async function GET() {
       database: "connected",
       migrations: migration?.count ?? 0,
       analytics,
-      portfolioSource: resolveDataRoot() ? "private-staging" : "synthetic",
+      portfolioSource: baseline?.count ? "database-baseline" : resolveDataRoot() ? "private-staging" : "synthetic",
       tradingCapability: "read_only",
     }, { status: analytics.status === "connected" ? 200 : 503 });
   } catch (error) {

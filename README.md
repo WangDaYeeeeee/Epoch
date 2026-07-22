@@ -36,14 +36,31 @@ pnpm install
 uv sync --locked --project services/analytics
 ```
 
-然后分别运行：
+然后用一个命令启动本地 PostgreSQL、执行迁移，并同时运行 Web、Scheduler 与 Analytics：
 
 ```bash
-pnpm db:migrate
-pnpm dev
-pnpm scheduler
-pnpm analytics:dev
+pnpm dev:local
 ```
+
+按 `Ctrl-C` 会统一停止三个应用进程。默认通过 Docker 启动 PostgreSQL；如果需要使用已有数据库，可先设置 `DATABASE_URL`。完整容器环境仍使用 `docker compose up --build`。
+
+首次运行时，脚本会通过 Homebrew 自动安装缺失的 `uv` 或 Docker Desktop，并自动安装/同步 Node 与 Python 项目依赖；后续启动只执行快速依赖同步。若使用已有 PostgreSQL，设置 `DATABASE_URL` 后不会安装或启动 Docker。
+
+导入 IBKR Flex CSV 报表：
+
+```bash
+pnpm import:flex -- --file /path/to/activity-statement.csv
+```
+
+这条命令只用于未来追加新的 IBKR 数据，不用于重做现有历史基线。原始报表按 SHA-256 不可变保存到 `data/raw/ibkr-flex/`（不纳入 Git），交易和现金流水按 IBKR 外部标识幂等写入账本。默认账户为 `ibkr_8602`，可通过 `--account` 修改。
+
+已有的 `tmp/satellite-data/normalized/*.csv` 会在 `pnpm dev:local` 和 Docker Compose 启动时自动校验并幂等登记到 PostgreSQL，无需手工重新导入。也可以单独执行只读检查：
+
+```bash
+pnpm baseline:check
+```
+
+组合页面与 `/api/v1/portfolio` 优先读取 PostgreSQL 中最新登记的基线版本；数据库暂不可用时会明确标记降级并回退到本地清洗数据，私有文件不存在时才使用合成 Demo。
 
 主要端点：
 

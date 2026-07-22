@@ -4,13 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "NEXT_DIST_DIR=.next-build next build",
+    "start": "NEXT_DIST_DIR=.next-build next start",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "db:migrate": "tsx scripts/migrate.ts",
-    "scheduler": "tsx scripts/scheduler.ts",
-    "scheduler:once": "tsx scripts/scheduler.ts --once"
+    "db:migrate": "node --import tsx scripts/migrate.ts",
+    "baseline:check": "node --import tsx scripts/baseline.ts check",
+    "baseline:import": "node --import tsx scripts/baseline.ts import",
+    "import:flex": "node --import tsx scripts/import-flex.ts",
+    "scheduler": "node --import tsx scripts/scheduler.ts",
+    "scheduler:once": "node --import tsx scripts/scheduler.ts --once"
   },
   "dependencies": {
     "@types/node": "^22.10.0",

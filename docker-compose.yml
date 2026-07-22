@@ -19,7 +19,10 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
-    command: ["pnpm", "db:migrate"]
+      EPOCH_DATA_ROOT: /data/satellite-data
+    command: ["sh", "-c", "pnpm db:migrate && pnpm baseline:import -- --optional"]
+    volumes:
+      - ./tmp/satellite-data:/data/satellite-data:ro
     depends_on:
       postgres: { condition: service_healthy }
 

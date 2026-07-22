@@ -1,11 +1,11 @@
 import { PerformanceChart } from "@/components/performance-chart";
 import type { PortfolioPayload } from "@/lib/types";
-import { loadPortfolio } from "@/lib/server/portfolio";
+import { loadPortfolioPreferDatabase } from "@/lib/server/portfolio";
 
 export const dynamic = "force-dynamic";
 
 async function getPortfolio(): Promise<PortfolioPayload> {
-  return loadPortfolio();
+  return loadPortfolioPreferDatabase();
 }
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -51,8 +51,8 @@ export default async function PortfolioPage() {
           </article>
           <article className="panel health" id="health">
             <div className="panel-head"><div><h2>数据健康</h2><p>最后可信快照</p></div><span className="status">可用</span></div>
-            <div className="health-score"><span>✓</span><div><strong>数据连续性</strong><p>{data.health.message}</p></div></div>
-            <dl><div><dt>账本守恒</dt><dd>{data.health.ledgerBalanced ? "已验证" : "待 Phase 1 对账"}</dd></div><div><dt>数据来源</dt><dd>{data.health.source === "private-staging" ? "本地清洗数据" : "合成数据"}</dd></div><div><dt>策略版本</dt><dd>{data.meta.strategyVersion}</dd></div></dl>
+            <div className="health-score"><span style={{ flex: "0 0 32px", minWidth: 32, minHeight: 32, lineHeight: 1 }}>✓</span><div><strong>数据连续性</strong><p>{data.health.message}</p></div></div>
+            <dl><div><dt>账本守恒</dt><dd>{data.health.ledgerBalanced ? "已验证" : "待 Phase 1 对账"}</dd></div><div><dt>数据来源</dt><dd>{data.health.source === "database-baseline" ? "PostgreSQL 基线" : data.health.source === "private-staging" ? "本地清洗数据" : "合成数据"}</dd></div><div><dt>策略版本</dt><dd>{data.meta.strategyVersion}</dd></div></dl>
           </article>
         </div>
         <footer>Epoch 不具备真实下单能力 · 所有交易均在券商端手工执行</footer>

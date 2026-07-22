@@ -1,4 +1,4 @@
-.PHONY: setup dev web analytics analytics-sync migrate scheduler scheduler-once test test-web test-analytics lint build verify
+.PHONY: setup dev local web analytics analytics-sync migrate scheduler scheduler-once test test-web test-analytics lint build verify
 
 setup:
 	pnpm install --frozen-lockfile
@@ -6,6 +6,9 @@ setup:
 
 dev:
 	docker compose up --build
+
+local:
+	pnpm dev:local
 
 web:
 	pnpm --filter @epoch/web dev
