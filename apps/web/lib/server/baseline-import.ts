@@ -66,11 +66,13 @@ export async function importBaselineDataset(sql: Sql, root: string): Promise<Bas
         await transaction`
           INSERT INTO reported_position_snapshot (
             raw_import_id, snapshot_date, account_id, instrument_id, ticker, name, category,
-            quantity, price, market_value, currency, cost_basis, fx_to_cny, market_value_cny, source
+            quantity, price, market_value, currency, cost_basis, fx_to_cny, market_value_cny,
+            base_currency, fx_to_base, market_value_base, source
           ) VALUES (
             ${positionFile.id}, ${row.date}, ${row.account_id}, ${row.instrument_id}, ${row.ticker}, ${row.name}, ${row.category},
             ${row.quantity}, ${row.price}, ${row.market_value}, ${row.currency}, ${optionalNumber(row.cost_basis)},
-            ${optionalNumber(row.fx_to_cny)}, ${optionalNumber(row.market_value_cny)}, ${row.source}
+            ${optionalNumber(row.fx_to_cny)}, ${optionalNumber(row.market_value_cny)}, ${row.base_currency || null},
+            ${optionalNumber(row.fx_to_base)}, ${optionalNumber(row.market_value_base)}, ${row.source}
           )
         `;
       }
@@ -83,11 +85,11 @@ export async function importBaselineDataset(sql: Sql, root: string): Promise<Bas
         await transaction`
           INSERT INTO reported_performance_snapshot (
             raw_import_id, snapshot_date, portfolio_id, total_assets, cash, net_external_flow,
-            currency, nav, period_return, benchmark, benchmark_return, source
+            currency, nav, period_return, benchmark, benchmark_return, source, external_flow_weight
           ) VALUES (
             ${performanceFile.id}, ${row.date}, ${row.portfolio_id}, ${row.total_assets}, ${optionalNumber(row.cash)}, ${row.net_external_flow},
             ${row.currency}, ${row.nav}, ${optionalNumber(row.period_return)}, ${row.benchmark},
-            ${optionalNumber(row.benchmark_return)}, ${row.source}
+            ${optionalNumber(row.benchmark_return)}, ${row.source}, ${optionalNumber(row.external_flow_weight)}
           )
         `;
       }

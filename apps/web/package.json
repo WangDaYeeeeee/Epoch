@@ -11,6 +11,7 @@
     "db:migrate": "node --import tsx scripts/migrate.ts",
     "baseline:check": "node --import tsx scripts/baseline.ts check",
     "baseline:import": "node --import tsx scripts/baseline.ts import",
+    "market:fetch": "node --import tsx scripts/fetch-market-data.ts",
     "import:flex": "node --import tsx scripts/import-flex.ts",
     "scheduler": "node --import tsx scripts/scheduler.ts",
     "scheduler:once": "node --import tsx scripts/scheduler.ts --once"

@@ -1,12 +1,22 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { assertCurrency, assertIsoDate } from "../domain/conventions";
+import { CASH_EQUIVALENT_INSTRUMENTS, isDerivativeInstrumentId, marketDataRequirement, type MarketDataRequirement } from "../domain/market-data";
+import { ledgerReplayReadiness, reconcileCashEndpoints, type CashEndpointReconciliation, type LedgerReplayReadiness } from "../domain/ledger-replay";
 import { parseCsv } from "./csv";
 
 export const BASELINE_FILES = ["transactions.csv", "positions.csv", "performance.csv"] as const;
 type BaselineFile = (typeof BASELINE_FILES)[number];
 type Row = Record<string, string>;
+export type PerformanceReconciliation = { datesContinuous: boolean; maxNavLinkError: number; flowWeightsComplete: boolean; maxAssetReturnError: number; assetReturnsReconciled: boolean };
+export type EventCoverage = { total: number; classified: number; trades: number; cashEvents: number; dividends: number; taxes: number; fxLegs: number; transfers: number; adjustments: number };
+export type ValuationCoverage = { total: number; withFx: number; fxReconciled: number; missingFx: number; maxBaseValueError: number };
+export type MarketDataCoverage = {
+  requiredSecurities: number; coveredSecurities: number; missingInstrumentIds: string[];
+  requiredFxPairs: number; coveredFxPairs: number; priceObservations: number; splitEvents: number;
+};
+const ALLOWED_ACTIONS = new Set(["buy", "sell", "deposit", "withdrawal", "dividend", "fee", "interest", "tax", "transfer_in", "transfer_out", "fx_buy", "fx_sell", "adjustment_in", "adjustment_out", "other"]);
 
 type ValidationEntry = {
   selected_rows: number;
@@ -33,9 +43,44 @@ export type BaselineDataset = {
   hashes: Record<BaselineFile, string>;
   checks: BaselineCheck[];
   positionReconciliation: PositionReconciliation;
+  valuationCoverage: ValuationCoverage;
+  marketDataRequirement: MarketDataRequirement;
+  marketDataCoverage: MarketDataCoverage;
+  ledgerReplayReadiness: LedgerReplayReadiness;
+  cashEndpointReconciliation: CashEndpointReconciliation;
   healthy: boolean;
   ledgerReconciled: false;
 };
+
+export function reconcileReportedValuations(rows: Row[]): ValuationCoverage {
+  let withFx = 0;
+  let fxReconciled = 0;
+  let maxBaseValueError = 0;
+  for (const row of rows) {
+    if (row.fx_to_base === "" || row.market_value_base === "" || row.base_currency === "") continue;
+    withFx += 1;
+    const error = Math.abs(Number(row.market_value_base) - Number(row.market_value) * Number(row.fx_to_base));
+    maxBaseValueError = Math.max(maxBaseValueError, error);
+    if (error <= (row.base_currency === "CNY" ? 0.01 : 0.0001)) fxReconciled += 1;
+  }
+  return { total: rows.length, withFx, fxReconciled, missingFx: rows.length - withFx, maxBaseValueError };
+}
+
+export function loadMarketDataCoverage(root: string, requirement: MarketDataRequirement): MarketDataCoverage {
+  const pricePath = resolve(root, "normalized/market-prices.csv");
+  const splitPath = resolve(root, "normalized/market-splits.csv");
+  const prices = existsSync(pricePath) ? parseCsv(readFileSync(pricePath, "utf8")) : [];
+  const splits = existsSync(splitPath) ? parseCsv(readFileSync(splitPath, "utf8")) : [];
+  const observed = new Set(prices.map((row) => row.instrument_id));
+  const missingInstrumentIds = requirement.canonicalInstrumentIds.filter((instrumentId) => !observed.has(instrumentId));
+  const coveredFxPairs = requirement.fxPairs.filter((pair) => observed.has(`FX:${pair}`)).length;
+  return {
+    requiredSecurities: requirement.canonicalInstrumentIds.length,
+    coveredSecurities: requirement.canonicalInstrumentIds.length - missingInstrumentIds.length,
+    missingInstrumentIds, requiredFxPairs: requirement.fxPairs.length, coveredFxPairs,
+    priceObservations: prices.length, splitEvents: splits.length,
+  };
+}
 
 export type PositionDifference = {
   accountId: string;
@@ -57,14 +102,14 @@ export type PositionReconciliation = {
 
 const REQUIRED_COLUMNS: Record<BaselineFile, string[]> = {
   "transactions.csv": ["transaction_id", "date", "account_id", "instrument_id", "action", "quantity", "price", "currency", "fees", "tax", "cash_amount", "external_flow", "source", "note"],
-  "positions.csv": ["date", "account_id", "instrument_id", "ticker", "name", "category", "quantity", "price", "market_value", "currency", "cost_basis", "fx_to_cny", "market_value_cny", "source"],
-  "performance.csv": ["date", "portfolio_id", "total_assets", "cash", "net_external_flow", "currency", "nav", "period_return", "benchmark", "benchmark_return", "source"],
+  "positions.csv": ["date", "account_id", "instrument_id", "ticker", "name", "category", "quantity", "price", "market_value", "currency", "cost_basis", "fx_to_cny", "market_value_cny", "source", "base_currency", "fx_to_base", "market_value_base"],
+  "performance.csv": ["date", "portfolio_id", "total_assets", "cash", "net_external_flow", "currency", "nav", "period_return", "benchmark", "benchmark_return", "source", "external_flow_weight"],
 };
 
 const NUMERIC_COLUMNS: Record<BaselineFile, string[]> = {
   "transactions.csv": ["quantity", "price", "fees", "tax", "cash_amount"],
-  "positions.csv": ["quantity", "price", "market_value", "cost_basis", "fx_to_cny", "market_value_cny"],
-  "performance.csv": ["total_assets", "cash", "net_external_flow", "nav", "period_return", "benchmark_return"],
+  "positions.csv": ["quantity", "price", "market_value", "cost_basis", "fx_to_cny", "market_value_cny", "fx_to_base", "market_value_base"],
+  "performance.csv": ["total_assets", "cash", "net_external_flow", "nav", "period_return", "benchmark_return", "external_flow_weight"],
 };
 
 function addCheck(checks: BaselineCheck[], name: string, passed: boolean, detail: string): void {
@@ -104,10 +149,33 @@ function validateRows(name: BaselineFile, rows: Row[], manifest: ValidationEntry
   if (name === "transactions.csv") {
     const validExternalFlow = rows.every((row) => row.external_flow === "true" || row.external_flow === "false");
     addCheck(checks, `${name}:external-flow-flags`, validExternalFlow, "boolean portfolio-flow classification");
+    addCheck(checks, `${name}:actions`, rows.every((row) => ALLOWED_ACTIONS.has(row.action)), unique(rows.map((row) => row.action)).join(", "));
   }
   addCheck(checks, `${name}:dates`, validDates, "ISO calendar dates");
   addCheck(checks, `${name}:currencies`, validCurrencies, unique(rows.map((row) => row.currency)).join(", "));
   addCheck(checks, `${name}:numbers`, validNumbers, "finite numeric values");
+}
+
+export function reconcileEventCoverage(rows: Row[]): EventCoverage {
+  const isPresent = (value: string | undefined) => value !== undefined && value !== "";
+  const valid = (row: Row): boolean => {
+    if (!ALLOWED_ACTIONS.has(row.action)) return false;
+    if (["buy", "sell"].includes(row.action)) return isPresent(row.instrument_id) && isPresent(row.quantity) && isPresent(row.price) && isPresent(row.cash_amount);
+    if (["adjustment_in", "adjustment_out"].includes(row.action)) return isPresent(row.instrument_id) && isPresent(row.quantity) && !isPresent(row.cash_amount);
+    if (["fx_buy", "fx_sell"].includes(row.action)) return row.instrument_id?.startsWith("FX:") === true && isPresent(row.cash_amount);
+    return isPresent(row.cash_amount);
+  };
+  return {
+    total: rows.length,
+    classified: rows.filter(valid).length,
+    trades: rows.filter((row) => row.action === "buy" || row.action === "sell").length,
+    cashEvents: rows.filter((row) => !["buy", "sell", "adjustment_in", "adjustment_out"].includes(row.action)).length,
+    dividends: rows.filter((row) => row.action === "dividend").length,
+    taxes: rows.filter((row) => row.action === "tax").length,
+    fxLegs: rows.filter((row) => row.action === "fx_buy" || row.action === "fx_sell").length,
+    transfers: rows.filter((row) => row.action === "transfer_in" || row.action === "transfer_out").length,
+    adjustments: rows.filter((row) => row.action === "adjustment_in" || row.action === "adjustment_out").length,
+  };
 }
 
 function validateKeys(rows: Record<BaselineFile, Row[]>, checks: BaselineCheck[]): void {
@@ -131,10 +199,12 @@ function validateScope(dataset: BaselineDataset): void {
   addCheck(dataset.checks, "scope:portfolio", portfolios.length === 1 && portfolios[0] === dataset.manifest.scope.portfolio, portfolios.join(", "));
 }
 
-function validatePerformanceChain(dataset: BaselineDataset): void {
-  const rows = [...dataset.rows["performance.csv"]].sort((left, right) => left.date.localeCompare(right.date));
+export function reconcilePerformanceReturns(input: Row[]): PerformanceReconciliation {
+  const rows = [...input].sort((left, right) => left.date.localeCompare(right.date));
   let datesContinuous = true;
   let maxNavLinkError = 0;
+  let maxAssetReturnError = 0;
+  let flowWeightsComplete = true;
   for (let index = 1; index < rows.length; index += 1) {
     const previous = rows[index - 1];
     const current = rows[index];
@@ -142,17 +212,33 @@ function validatePerformanceChain(dataset: BaselineDataset): void {
     if (dayDifference !== 1) datesContinuous = false;
     const periodReturn = Number(current.period_return);
     maxNavLinkError = Math.max(maxNavLinkError, Math.abs(Number(current.nav) / Number(previous.nav) - 1 - periodReturn));
+    const externalFlow = Number(current.net_external_flow);
+    const weight = current.external_flow_weight === "" ? (externalFlow ? Number.NaN : 0) : Number(current.external_flow_weight);
+    if (!Number.isFinite(weight) || weight < 0 || weight > 1) flowWeightsComplete = false;
+    else {
+      const denominator = Number(previous.total_assets) + weight * externalFlow;
+      const reconstructedReturn = (Number(current.total_assets) - Number(previous.total_assets) - externalFlow) / denominator;
+      maxAssetReturnError = Math.max(maxAssetReturnError, Math.abs(reconstructedReturn - periodReturn));
+    }
   }
-  addCheck(dataset.checks, "performance:calendar-continuity", datesContinuous, `${rows.length} consecutive calendar days`);
-  addCheck(dataset.checks, "performance:nav-chain", maxNavLinkError <= 1e-8, `maximum link error ${maxNavLinkError.toExponential(2)}`);
-  dataset.checks.push({ name: "performance:asset-return-reconciliation", status: "pending", detail: "requires source-specific cash-flow timing conventions" });
-  dataset.checks.push({ name: "ledger:full-reconciliation", status: "pending", detail: "requires daily prices, FX, and corporate-action normalization" });
+  return { datesContinuous, maxNavLinkError, flowWeightsComplete, maxAssetReturnError, assetReturnsReconciled: flowWeightsComplete && maxAssetReturnError <= 5e-5 };
+}
+
+function validatePerformanceChain(dataset: BaselineDataset): void {
+  const rows = [...dataset.rows["performance.csv"]].sort((left, right) => left.date.localeCompare(right.date));
+  const result = reconcilePerformanceReturns(rows);
+  addCheck(dataset.checks, "performance:calendar-continuity", result.datesContinuous, `${rows.length} consecutive calendar days`);
+  addCheck(dataset.checks, "performance:nav-chain", result.maxNavLinkError <= 1e-8, `maximum link error ${result.maxNavLinkError.toExponential(2)}`);
+  addCheck(dataset.checks, "performance:cash-flow-weights", result.flowWeightsComplete, "explicit Modified Dietz weights in [0, 1] for every non-zero external flow");
+  // The oldest Futu source reports daily return to four decimal places, so the
+  // reconciliation tolerance is half of one source unit (0.005 percentage point).
+  addCheck(dataset.checks, "performance:asset-return-reconciliation", result.assetReturnsReconciled, `maximum Modified Dietz return error ${result.maxAssetReturnError.toExponential(2)} (source tolerance 5.00e-5)`);
 }
 
 export function reconcilePositionQuantities(transactions: Row[], positions: Row[]): PositionReconciliation {
   const accounts = unique(positions.map((row) => row.account_id));
   const result: PositionReconciliation = { intervals: 0, comparisons: 0, matched: 0, timezoneAdjustedTransactions: 0, differences: [] };
-  const isSecurity = (row: Row) => row.category !== "cash" && row.category !== "other";
+  const isSecurity = (row: Row) => row.category !== "cash" && row.category !== "other" && !CASH_EQUIVALENT_INSTRUMENTS.has(row.instrument_id) && !isDerivativeInstrumentId(row.instrument_id);
   const reconciliationDate = (row: Row): string => {
     const statementDate = row.source.match(/_statement_(\d{4}-\d{2}-\d{2})\.pdf/)?.[1];
     if (!statementDate || !row.instrument_id.startsWith("US:")) return row.date;
@@ -175,8 +261,8 @@ export function reconcilePositionQuantities(transactions: Row[], positions: Row[
       for (const item of datedTransactions) {
         const row = item.row;
         if (row.account_id !== accountId || item.reconciliationDate <= fromDate || item.reconciliationDate > toDate || !row.instrument_id) continue;
-        if (row.action !== "buy" && row.action !== "sell") continue;
-        const direction = row.action === "buy" ? 1 : -1;
+        if (!["buy", "sell", "adjustment_in", "adjustment_out"].includes(row.action) || CASH_EQUIVALENT_INSTRUMENTS.has(row.instrument_id) || isDerivativeInstrumentId(row.instrument_id)) continue;
+        const direction = row.action === "buy" || row.action === "adjustment_in" ? 1 : -1;
         expected.set(row.instrument_id, (expected.get(row.instrument_id) ?? 0) + direction * Number(row.quantity));
       }
       const reported = new Map(
@@ -209,10 +295,32 @@ export function loadBaselineDataset(root: string): BaselineDataset {
     validateRows(name, rows[name], manifest.normalized[name], checks);
   }
   const positionReconciliation = reconcilePositionQuantities(rows["transactions.csv"], rows["positions.csv"]);
-  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, healthy: false, ledgerReconciled: false };
+  const valuationCoverage = reconcileReportedValuations(rows["positions.csv"]);
+  const marketRequirement = marketDataRequirement(rows["transactions.csv"], rows["performance.csv"]);
+  const marketCoverage = loadMarketDataCoverage(root, marketRequirement);
+  const splitPath = resolve(root, "normalized/market-splits.csv");
+  const replayReadiness = ledgerReplayReadiness(rows["transactions.csv"], existsSync(splitPath) ? parseCsv(readFileSync(splitPath, "utf8")) : []);
+  const cashEndpointReconciliation = reconcileCashEndpoints(rows["transactions.csv"], rows["positions.csv"]);
+  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, valuationCoverage, marketDataRequirement: marketRequirement, marketDataCoverage: marketCoverage, ledgerReplayReadiness: replayReadiness, cashEndpointReconciliation, healthy: false, ledgerReconciled: false };
   validateKeys(rows, checks);
   validateScope(dataset);
   validatePerformanceChain(dataset);
+  const eventCoverage = reconcileEventCoverage(rows["transactions.csv"]);
+  addCheck(dataset.checks, "ledger:event-contracts", eventCoverage.classified === eventCoverage.total, `${eventCoverage.classified}/${eventCoverage.total} events satisfy their type contract`);
+  dataset.checks.push({
+    name: "market-data:daily-coverage",
+    status: marketCoverage.missingInstrumentIds.length || marketCoverage.coveredFxPairs !== marketCoverage.requiredFxPairs ? "pending" : "passed",
+    detail: `${marketCoverage.coveredSecurities}/${marketCoverage.requiredSecurities} canonical securities and ${marketCoverage.coveredFxPairs}/${marketCoverage.requiredFxPairs} FX pairs covered by ${marketCoverage.priceObservations} observations; missing ${marketCoverage.missingInstrumentIds.join(", ") || "none"}`,
+  });
+  addCheck(dataset.checks, "ledger:replay-input-classification", replayReadiness.classified === replayReadiness.total, `${replayReadiness.classified}/${replayReadiness.total} events mapped to replay inputs; ${replayReadiness.positionImpactingSplits}/${replayReadiness.splitEvents} split events impact open positions`);
+  dataset.checks.push({
+    name: "ledger:cash-endpoint-reconciliation",
+    status: cashEndpointReconciliation.differences.length ? "pending" : "passed",
+    detail: `${cashEndpointReconciliation.matched}/${cashEndpointReconciliation.endpoints} latest account-currency cash endpoints matched; ${cashEndpointReconciliation.differences.length} differences require source classification`,
+  });
+  dataset.checks.push({ name: "ledger:full-reconciliation", status: "pending", detail: marketCoverage.missingInstrumentIds.length ? "market-data coverage is not complete" : "daily ledger replay is not complete" });
+  addCheck(dataset.checks, "positions:reported-base-valuations", valuationCoverage.fxReconciled === valuationCoverage.withFx, `${valuationCoverage.fxReconciled}/${valuationCoverage.withFx} available base-currency valuations reconcile within source precision`);
+  dataset.checks.push({ name: "positions:fx-coverage", status: valuationCoverage.missingFx ? "pending" : "passed", detail: `${valuationCoverage.withFx}/${valuationCoverage.total} rows carry explicit broker base-currency FX; ${valuationCoverage.missingFx} rows missing` });
   dataset.checks.push({
     name: "ledger:position-quantity-reconciliation",
     status: positionReconciliation.differences.length ? "pending" : "passed",

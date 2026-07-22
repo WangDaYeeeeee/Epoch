@@ -54,3 +54,20 @@
 .panel-head p,.drawdown-title small { font-size: 11px; line-height: 1.45; }
 @media (max-width: 700px) { .range-controls { margin: 0 0 16px; justify-content: flex-start; flex-wrap: wrap; } }
 @media (max-width: 520px) { .range-scrubber { padding-inline: 10px; } .scrubber-dates span { display: none; } }
+.reconciliation { margin-top: 14px; }
+.reconciliation-status { padding: 7px 10px; border-radius: 100px; font-size: 11px; }
+.reconciliation-status.pending,.review-badge { color: #e0bd72; background: rgba(224,189,114,.1); border: 1px solid rgba(224,189,114,.22); }
+.reconciliation-status.passed { color: #5bc59b; background: rgba(91,197,155,.1); }
+.reconciliation-summary { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-bottom: 18px; }
+.reconciliation-summary div { display: grid; gap: 5px; padding: 14px; background: rgba(13,9,40,.7); border: 1px solid rgba(43,36,96,.7); border-radius: 10px; }
+.reconciliation-summary span { color: #7f7999; font-size: 10px; }
+.reconciliation-summary strong { font: 600 18px Montserrat; }
+.reconciliation-table-wrap { overflow-x: auto; }
+.reconciliation-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.reconciliation-table th { text-align: left; color: #7f7999; font-weight: 500; padding: 9px 12px; border-bottom: 1px solid #2b2460; }
+.reconciliation-table td { padding: 12px; border-bottom: 1px solid rgba(43,36,96,.6); color: #b5b0c9; }
+.reconciliation-table td strong,.reconciliation-table td small { display: block; }
+.reconciliation-table td small { color: #7f7999; margin-top: 4px; }
+.reconciliation-table .difference { color: #f07a89; font-weight: 600; }
+.review-badge { display: inline-block!important; padding: 5px 8px; border-radius: 100px; white-space: nowrap; }
+@media (max-width: 900px) { .reconciliation-summary { grid-template-columns: 1fr 1fr; } }
