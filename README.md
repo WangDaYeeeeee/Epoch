@@ -42,6 +42,16 @@ uv sync --locked --project services/analytics
 pnpm dev:local
 ```
 
+**券商接入边界**：Epoch 不做盘中高频信息探测，日常运行**不需要 IBKR Client Portal Gateway 或 TWS**——两者均需常驻会话与每日交互式二次认证，与无人值守部署冲突。账本走 Flex Web Service（无状态 HTTPS、日频拉取），行情走独立日频 OHLC 源。默认状态下页面显示“IBKR 未配置”，账本、绩效与确定性计算全部正常。
+
+若你本机已自行启动 Client Portal Gateway，可将 API 根地址传入以查看只读连接状态；这是可选能力，不是任何功能的前提：
+
+```bash
+IBKR_WEB_API_URL=https://127.0.0.1:5000/v1/api pnpm dev:local
+```
+
+Epoch 只请求连接/认证状态，不实现订单创建、修改或提交端点。
+
 按 `Ctrl-C` 会统一停止三个应用进程。默认通过 Docker 启动 PostgreSQL；如果需要使用已有数据库，可先设置 `DATABASE_URL`。完整容器环境仍使用 `docker compose up --build`。
 
 首次运行时，脚本会通过 Homebrew 自动安装缺失的 `uv` 或 Docker Desktop，并自动安装/同步 Node 与 Python 项目依赖；后续启动只执行快速依赖同步。若使用已有 PostgreSQL，设置 `DATABASE_URL` 后不会安装或启动 Docker。
@@ -78,7 +88,9 @@ pnpm baseline:check
 
 `HK0000502390`、`HK0000584752`、`HK0000938420` 按现金等价物处理：基金申赎属于现金管理内部转换，不构成证券级日频行情的硬依赖；基金管理人 NAV 与券商报告估值仅作为辅助核验依据。
 
-运行 `pnpm market:fetch` 会把公开日频行情原始响应写入私有暂存区，并生成 `market-prices.csv` 与 `market-splits.csv`；原始响应保留内容哈希，下载数据不会提交到仓库。
+运行 `pnpm market:fetch` 会把公开日频行情原始响应写入私有暂存区，并生成 `market-prices.csv`、`market-bars.csv` 与 `market-splits.csv`；原始响应保留内容哈希，下载数据不会提交到仓库。
+
+已有原始行情时可以运行 `pnpm market:normalize`，完全离线重新生成兼容的 `market-prices.csv`、`market-bars.csv` 和 `market-splits.csv`。OHLCV 行同时携带来源观测时间；联网刷新仍需显式允许将所需标的列表发送给对应公开数据源。
 
 主要端点：
 
@@ -86,6 +98,6 @@ pnpm baseline:check
 - `GET /api/v1/portfolio`：当前组合；
 - `GET /api/v1/calculations/demo`：从固定交易、现金流和价格重建的每日账本。
 
-Phase 0 的范围与验收证据见 [docs/reviews/PHASE_0.md](docs/reviews/PHASE_0.md)，数据约定见 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)。
+Phase 0 与 Phase 1 的范围及验收证据分别见 [docs/reviews/PHASE_0.md](docs/reviews/PHASE_0.md) 和 [docs/reviews/PHASE_1.md](docs/reviews/PHASE_1.md)；Phase 2 的实施进度见 [docs/reviews/PHASE_2.md](docs/reviews/PHASE_2.md)。数据约定见 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)。
 
-Python Analytics 当前已完成服务骨架、共享契约、健康检查和端到端契约检查；HAR、ERC、CVaR 等生产量化模型仍按 Phase 3 路线实现。
+Python Analytics 当前已完成服务骨架、共享契约、健康检查和端到端契约检查；SHAR-IV-J、σₚ、CVaR 等生产量化模型仍按 Phase 3 路线实现。Analytics 只做风险度量与监控呈现，不求解权重。

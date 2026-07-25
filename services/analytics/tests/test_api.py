@@ -39,6 +39,6 @@ def test_contract_check_round_trip() -> None:
 
 
 def test_unknown_calculation_is_not_silently_accepted() -> None:
-    response = client.post("/v1/calculations/run", json=request_body("har-iv-j"))
+    response = client.post("/v1/calculations/run", json=request_body("shar-iv-j"))
     assert response.status_code == 501
-    assert response.json()["detail"] == "Unsupported calculation type: har-iv-j"
+    assert response.json()["detail"] == "Unsupported calculation type: shar-iv-j"

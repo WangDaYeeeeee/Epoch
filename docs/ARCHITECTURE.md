@@ -1,7 +1,9 @@
 # Epoch 技术架构
 
-状态：Draft v0.3
-日期：2026-07-21
+状态：Draft v0.4
+日期：2026-07-25
+
+> v0.4 变更摘要：对齐《投资策略》大改——`policy` 收敛为唯一硬卡口 σₚ ≤ 45%，`analytics` 不再求解权重（ERC / θ 合成移除），HAR-IV-J 改为 SHAR-IV-J（符号跳跃 ΔJ）；新增 `VolatilityAnchor`、`WeightTier`、`RefillPlan` / `RefillBatch`，`ViewAllocation` 退役；确定不接入 TWS / Client Portal Gateway，期权链与日内收益标记为待补数据源。
 
 ## 1. 架构目标
 
@@ -29,8 +31,8 @@
 | 类型 | 内容 | 生成者 | 是否可覆盖上一层 |
 |---|---|---|---|
 | 事实 | 账本、行情、期权链、事件时间、原始证据 | Connectors / 所有者 | 否 |
-| 计算 | NAV、收益归因、HAR、ERC、RC、CVaR、压力测试 | 确定性代码 | 否 |
-| 判断 | 六因子评估、观点权重、主线判断、预案、调仓意向 | Agent / 所有者 | 否 |
+| 计算 | NAV、收益归因、SHAR、σₚ、RC、CVaR、压力测试 | 确定性代码 | 否 |
+| 判断 | 六因子评估、权重档位、主线判断、预案、调仓意向 | Agent / 所有者 | 否 |
 | 决定 | 确认、修改、拒绝与实际执行 | 所有者 | 仅以新版本追加 |
 
 Agent 不能将推论写成事实，也不能将调仓意向写成最终决定。
@@ -42,7 +44,7 @@ Agent 不能将推论写成事实，也不能将调仓意向写成最终决定�
         ↓
 归一化事实与组合快照
         ↓
-确定性计算层：绩效 / HAR / ERC / RC / CVaR / 压力情景
+确定性计算层：绩效 / SHAR / σₚ / RC / CVaR / 压力情景
         ↓
 外部 Agent 判断层：研究 / 预案 / 波动性质 / 调仓意向
         ↓
@@ -89,7 +91,7 @@ Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化
 | Web UI | Next.js + TypeScript | Operations、Portfolio、Allocation & Risk、Journal |
 | API | Next.js Route Handlers + TypeScript | 领域接口、Agent Gateway 与数据服务；与 Web 共享类型 |
 | 业务计算 | TypeScript 确定性模块 | 账本、NAV、输入快照、计算编排和 Policy Gate |
-| 量化计算 | Python Analytics Service | HAR、IV/Greeks、协方差、ERC/RC、CVaR、压力测试和回测 |
+| 量化计算 | Python Analytics Service | SHAR/HAR、协方差、σₚ、RC、CVaR、压力测试和回测 |
 | 计算契约 | JSON Schema + HTTP | TypeScript 与 Python 共享版本化输入输出，不共享数据库写权 |
 | 数据库 | PostgreSQL | 事实、版本、计算结果和审计关系 |
 | 原始数据 | 本地对象目录 | 保存不可变外部响应与内容哈希 |
@@ -123,11 +125,14 @@ Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化
 负责纯计算能力：
 
 - 历史和前瞻波动率；
-- HAR-RV / HAR-IV-J 及后续模型变体；
-- 协方差与相关性估计；
-- ERC、RC、组合波动率与目标权重合成；
+- HAR-RV / SHAR-IV-J 及后续模型变体；
+- 协方差与 250 日相关性估计；
+- 组合波动率 σₚ、stress σₚ（ρ = 0.90）与波动率漂移倍数；
+- RC、风险/资金比、乖离度与相关性聚类；
 - CVaR、历史情景和压力测试；
 - 指数隐波、隐含相关性、put skew、GEX 与其他市场结构指标。
+
+`analytics` **不求解权重**。ERC 与均值方差类优化不在职责内——权重由所有者按档位人工给出，数学模型只做风险度量与监控呈现。
 
 `analytics` 输出带单位的数值、质量状态和计算说明，不输出“应该买入/卖出”的语义判断。
 
@@ -135,15 +140,18 @@ Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化
 
 ### 5.6 policy
 
-负责策略版本、参数集、预警、交易触发和硬约束。主要职责是：
+负责策略版本、参数集、提示、复核待办和唯一硬卡口。主要职责是：
 
-- 根据当时持仓数量计算 RC 预警与偏离触发线；
-- 校验组合波动率、压力情景、财报日与回撤约束；
+- 校验组合波动率 σₚ ≤ 45%，并输出余量；
 - 校验替代标的是否来自已评估候选池；
-- 检查禁买期、参数冻结期与仅允许降风险的状态；
+- 校验目标权重是否落在构建规则区间 [10%, 40%] 且为 5% 的倍数；
+- 检查 90 天禁回购（仅约束主动清仓）、参数冻结期与仅允许降风险的状态；
+- 跟踪回补批次的触发条件与强制时限；
 - 对调仓意向的目标组合重新计算并输出逐条校验结果。
 
 `policy` 不判断公司质量、主线是否证伪或波动是否系统性。
+
+> **唯一能强制交易的条款是 σₚ 卡口。** 波动率漂移、RC、风险/资金比、乖离度、CVaR 与压力情景均只产生提示与复核待办，不构成否决理由。[10%, 40%] 是构建规则，在设定目标权重时检查一次，**不因市价波动触发临时调仓**。
 
 ### 5.7 operations
 
@@ -151,7 +159,9 @@ Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化
 
 ### 5.8 journal
 
-负责结构化研究、因子评估、观点权重、事实/假设/推论、催化剂、证伪条件、预案、调仓意向、最终决定、实际执行和复盘。主观对象均使用追加版本，保留当时语境。
+负责结构化研究、因子评估、权重档位与三行理由、事实/假设/推论、催化剂、证伪条件、预案、调仓意向、最终决定、实际执行和复盘。主观对象均使用追加版本，保留当时语境。
+
+调仓记录表字段与《投资策略》5.1 保持一致，含触发类型、σᵢ 与锚点 σᵢ⁰（注明估计器）、σₚ 与 stress σₚ、权重档位及三行理由、监控盘异常项与复核结论、计划 vs 实际执行。
 
 ### 5.9 agent_gateway
 
@@ -162,14 +172,27 @@ Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化
 | 数据层 | 用途 | 首选来源 | 频率 |
 |---|---|---|---|
 | 账本 | 交易、现金、股息、费用、公司行动 | IBKR Flex Web Service | 每日 |
-| 账户状态 | 盘中持仓、余额和 PnL | IBKR Web API/WebSocket | 按需/盘中 |
-| 价格与汇率 | OHLC、指数、基准、USD 统一收益 | IBKR 或独立数据源 | 日频/按需 |
-| 期权 | IV、skew、GEX 与期限结构 | IBKR 期权链或独立数据源 | 每日/事件前后 |
+| 价格与汇率 | OHLC、指数、基准、USD 统一收益 | 独立日频行情源 | 日频 |
+| 日内收益 | 严格口径的 RS± / ΔJ | 待补数据源（当前用日频近似） | — |
+| 期权 | IV、skew、GEX 与期限结构 | 待补数据源 | — |
+| 指数隐波与隐含相关性 | 系统性 vs 特质性判据 | CBOE 公开数据 | 日频 |
 | 基本面 | 财报、指引与公司事实 | 官方文件优先 | 事件驱动 |
 | 事件 | 财报日、宏观、政策与行业日程 | 官方日历/多来源 | 每日扫描 |
 | 主观数据 | 评估、预案、意向、决定与复盘 | Agent / 所有者 | 任务/事件驱动 |
 
-IBKR Flex Activity Statement 作为日终可对账账本，不用于实时轮询。盘中账户状态使用 IBKR Web API；连接器必须显式管理会话、订阅、速率和 WebSocket 生命周期。
+### 6.1 券商接入边界
+
+IBKR Flex Activity Statement 作为日终可对账账本，不用于实时轮询。Flex Web Service 是无状态 HTTPS 拉取，token 支持 IP 白名单与最长一年有效期，适合无人值守的固定 IP 部署。
+
+**Epoch 不接入 TWS API 与 Client Portal Gateway。** 两者均需常驻会话与每日交互式二次认证，与"不做盘中高频探测"的产品边界及无人值守部署冲突。因此：
+
+- 不存在盘中持仓、盘中余额与 WebSocket 订阅链路；
+- 期权链、IV 与 put skew 当前**无数据源**，`β_iv` 外生项按降级口径运行；
+- 组合风险计算只依赖日频 OHLC 与汇率，不依赖券商实时行情。
+
+已实现的 `ibkr-web` 只读连接状态检查保留为可选能力，默认不启用。
+
+### 6.2 时效标记
 
 每个数据集记录最后成功时间、应有截止时间、质量状态和降级原因。数据不新鲜时不得静默沿用“正常”状态。
 
@@ -201,11 +224,14 @@ ParameterSet
 CalculationRun
 VolatilityForecast
 CovarianceEstimate
+VolatilityAnchor
 AllocationSnapshot
 RiskMetric
 StressScenario
 PolicyEvaluation
 ```
+
+`VolatilityAnchor` 在每次调仓时归档当时的 `σᵢ⁰` 与 `σₚ⁰`，供后续计算漂移倍数 `σᵢ/σᵢ⁰`、`σₚ/σₚ⁰`——用于区分"这只票变了"与"整个市场变了"。锚点只在调仓时重置，不随日常计算更新。
 
 `CalculationRun` 是计算审计的核心，至少记录：
 
@@ -222,7 +248,7 @@ Theme
 ThemeVersion
 Candidate
 FactorAssessment
-ViewAllocation
+WeightTier
 Evidence
 Claim
 Catalyst
@@ -234,11 +260,17 @@ Playbook
 PlaybookBranch
 ExceptionRecord
 RebalanceIntent
+RefillPlan
+RefillBatch
 Decision
 ExecutionRecord
 Review
 AgentRun
 ```
+
+`WeightTier` 取代原 `ViewAllocation`：权重不再由 `θ·观点 + (1−θ)·ERC` 合成，而是人工归入档位（40 / 35 / 30 / 25 / 20 / 15 / 10），并强制记录三行理由——盈利预期（含可证伪的锚）、主要风险（须与 `InvalidationCondition` 一致）、为什么是这一层。
+
+`RefillPlan` / `RefillBatch` 描述风控减仓后的回补状态机：三批各 1/3、逐批触发条件、卡口连续通过 10 个交易日的强制时限。风控减仓是风险层行为，**不改变 `WeightTier`**；回补目标是当前目标权重，不是减仓前的权重。
 
 关键关系：
 
@@ -246,10 +278,12 @@ AgentRun
 - `PositionSnapshot → Instrument`：保存 point-in-time 持仓；
 - `StrategyVersion → ParameterSet → CalculationRun`：每次计算明确使用的规则与参数；
 - `Evidence → Claim → FactorAssessment/ThemeVersion`：证据通过可验证命题支撑研究判断；
-- `FactorAssessment → ViewAllocation`：观点权重引用评估与权重差异理由；
+- `FactorAssessment → WeightTier`：权重档位引用因子结论与"为什么是这一层"的理由；
+- `WeightTier → VolatilityAnchor`：目标权重与当时的 σ 锚点一同归档；
 - `Event → EventHorizonEntry → Playbook`：事件与时间距离、预案状态分离；
 - `RebalanceIntent → PolicyEvaluation → Decision`：Agent 意向、机械校验和人工决定分离；
-- `Decision → ExecutionRecord`：决定与券商端实际执行差异可追踪。
+- `Decision → ExecutionRecord`：决定与券商端实际执行差异可追踪；
+- `Decision → RefillPlan → RefillBatch`：风控减仓派生回补计划，批次执行与未执行理由均留痕。
 
 ## 8. 数据约定
 
@@ -299,21 +333,25 @@ Analytics Service 提供健康检查和版本化计算端点。日常秒级计�
 - 不适用品种的拒绝或替代模型；
 - 输出质量状态与用户可见的解释。
 
-降级结果不能冒充完整 HAR-IV-J 结果。Policy Gate 可根据模型可用性决定只允许降风险动作或要求人工复核。
+降级结果不能冒充完整 SHAR-IV-J 结果。每次输出必须标明当期估计器口径——SHAR-IV-J、无 IV 项设定、60 日 Garman-Klass 降级，以及半方差用的是日内口径还是日频近似。Policy Gate 可根据模型可用性决定只允许降风险动作或要求人工复核。
+
+> **估计器可升级，卡口值不变。** σₚ ≤ 45% 不因估计器降级而放宽或收紧。
 
 ### 9.2 目标权重与校验
 
 ```text
-已确认 ViewAllocation + ERC
+人工设定 WeightTier（档位 + 三行理由）
              ↓
-      按 θ 合成目标权重
+      计算 σₚ / stress σₚ / RC / CVaR / 压力情景
              ↓
-      计算 RC / σₚ / CVaR / 压力情景
-             ↓
-      Policy Gate 逐条校验
+      Policy Gate 校验：σₚ ≤ 45% · 候选池来源 · 构建规则区间
              ↓
       合规目标或明确否决原因
+             ↓
+      归档 VolatilityAnchor（σᵢ⁰ / σₚ⁰）
 ```
+
+Epoch 不合成目标权重——`AllocationSnapshot` 记录的是人工给定的档位结果与当时的风险度量，不是求解产物。
 
 Agent 提交的 `RebalanceIntent` 不得携带自行计算的“已合规”结论。Policy Gate 必须使用当时数据和目标持仓独立重算。
 
@@ -343,7 +381,7 @@ skills/
 Agent Gateway 提供的核心能力分为：
 
 - **查询**：组合快照、持仓、绩效、穿透、风险快照、事件视界、策略与历史研究；
-- **有限写入**：研究草稿、因子评估、观点权重、预案、调仓意向和复盘；
+- **有限写入**：研究草稿、因子评估、权重档位建议、预案、调仓意向和复盘；
 - **计算请求**：请求 Epoch 执行组合计算或硬约束校验，Agent 不自行写入计算结果。
 
 每次 `AgentRun` 保存：
@@ -402,9 +440,10 @@ Agent Gateway 提供的核心能力分为：
 
 ### 13.2 金融计算
 
-- HAR、协方差、ERC、RC、CVaR 和压力测试的固定向量与黄金结果；
-- 不同持仓数量下 RC 阈值的参数化测试；
-- 期权、汇率、交易日错位与跳跃情景测试；
+- HAR / SHAR、协方差、σₚ、stress σₚ、RC、CVaR 和压力测试的固定向量与黄金结果；
+- 半方差 RS± 与符号跳跃 ΔJ 在日内口径与日频近似下的对照测试；
+- 波动率漂移倍数与 1.5× / 2.0× 分级边界的参数化测试；
+- 汇率、交易日错位与跳跃情景测试；
 - 数据缺失、模型不适用和降级状态测试；
 - 计算运行重现与版本变更测试。
 
@@ -412,7 +451,8 @@ Agent Gateway 提供的核心能力分为：
 
 - 《投资策略》中每条机械规则都有确定性测试；
 - 同一调仓意向在固定快照和版本下必须得到相同结果；
-- 财报日、回撤、参数冻结、禁买期和仅降风险状态覆盖边界用例；
+- σₚ 卡口边界、候选池来源、构建规则区间、参数冻结期、90 天禁回购（含风控减仓豁免）和仅降风险状态覆盖边界用例；
+- 回补批次的触发条件、强制时限与"回补不得越限"边界；
 - 失败时输出精确的规则、输入和否决原因。
 
 ### 13.4 Agent
@@ -464,7 +504,12 @@ Docker Compose 的目标稳态拓扑为四个常驻服务：PostgreSQL、Web/API
 
 ## 15. 官方接口参考
 
+当前使用：
+
+- [IBKR Flex Web Service](https://ibkrcampus.com/campus/ibkr-api-page/flex-web-service/)——日终账本唯一券商接口
+
+参考（当前不接入，见 6.1）：
+
 - [IBKR Web API Documentation](https://ibkrcampus.com/campus/ibkr-api-page/webapi-doc/)
 - [IBKR Web API Changelog](https://ibkrcampus.com/campus/ibkr-api-page/web-api-changelog/)
-- [IBKR Flex Web Service](https://ibkrcampus.com/campus/ibkr-api-page/flex-web-service/)
 - [IBKR Market Data Subscriptions](https://ibkrcampus.com/campus/ibkr-api-page/market-data-subscriptions/)
