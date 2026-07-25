@@ -1,3 +1,5 @@
+import { assertIsoDate } from "./conventions";
+
 export type MarketDataRequirement = {
   dateFrom: string;
   dateTo: string;
@@ -5,6 +7,26 @@ export type MarketDataRequirement = {
   canonicalInstrumentIds: string[];
   aliasesCollapsed: number;
   fxPairs: string[];
+};
+
+export type MarketDataFreshness = {
+  status: "fresh" | "stale" | "missing";
+  latestEffectiveDate: string | null;
+  expectedThroughDate: string;
+  tradingDayLag: number | null;
+  observedAt: string | null;
+  observationTimestampQuality: "authoritative" | "filesystem_fallback" | "missing";
+  reason: string;
+};
+
+export type MarketBarCoverage = {
+  requiredInstruments: number;
+  coveredInstruments: number;
+  missingInstrumentIds: string[];
+  totalBars: number;
+  validBars: number;
+  invalidBars: number;
+  duplicateBars: number;
 };
 
 const US_VENUES = new Set(["ARCX", "BATS", "XNAS", "XNYS"]);
@@ -42,5 +64,98 @@ export function marketDataRequirement(
     canonicalInstrumentIds,
     aliasesCollapsed: rawIds.length - canonicalInstrumentIds.length,
     fxPairs: [...currencies].filter((currency) => currency !== "USD").sort().map((currency) => `${currency}USD`),
+  };
+}
+
+export function currentPositionMarketDataRequirement(
+  positions: Array<Record<string, string>>,
+): MarketDataRequirement {
+  const latestDate = positions.map((row) => row.date).filter(Boolean).sort().at(-1) ?? "";
+  const current = positions.filter((row) => row.date === latestDate);
+  const rawIds = [...new Set(current
+    .filter((row) => Number(row.quantity) !== 0)
+    .map((row) => row.instrument_id)
+    .filter((instrumentId) => instrumentId && !instrumentId.startsWith("CASH:") && !instrumentId.startsWith("ACCRUAL:") && !CASH_EQUIVALENT_INSTRUMENTS.has(instrumentId)))].sort();
+  const canonicalInstrumentIds = [...new Set(rawIds.map(canonicalMarketInstrumentId))].sort();
+  const currencies = new Set(current.filter((row) => Number(row.quantity) !== 0).map((row) => row.currency).filter(Boolean));
+  return {
+    dateFrom: latestDate,
+    dateTo: latestDate,
+    rawInstrumentIds: rawIds.length,
+    canonicalInstrumentIds,
+    aliasesCollapsed: rawIds.length - canonicalInstrumentIds.length,
+    fxPairs: [...currencies].filter((currency) => currency !== "USD").sort().map((currency) => `${currency}USD`),
+  };
+}
+
+export function evaluateMarketDataFreshness(input: {
+  latestEffectiveDate: string | null;
+  expectedThroughDate: string;
+  tradingDayLag: number | null;
+  observedAt?: string | null;
+  observationTimestampQuality?: MarketDataFreshness["observationTimestampQuality"];
+  maximumTradingDayLag?: number;
+}): MarketDataFreshness {
+  const maximumTradingDayLag = input.maximumTradingDayLag ?? 1;
+  const observationTimestampQuality = input.observationTimestampQuality ?? (input.observedAt ? "authoritative" : "missing");
+  if (!input.latestEffectiveDate || input.tradingDayLag == null) {
+    return {
+      status: "missing",
+      latestEffectiveDate: input.latestEffectiveDate,
+      expectedThroughDate: input.expectedThroughDate,
+      tradingDayLag: input.tradingDayLag,
+      observedAt: input.observedAt ?? null,
+      observationTimestampQuality,
+      reason: "No common effective date is available for all required market and FX series.",
+    };
+  }
+  const status = input.tradingDayLag <= maximumTradingDayLag ? "fresh" : "stale";
+  return {
+    status,
+    latestEffectiveDate: input.latestEffectiveDate,
+    expectedThroughDate: input.expectedThroughDate,
+    tradingDayLag: input.tradingDayLag,
+    observedAt: input.observedAt ?? null,
+    observationTimestampQuality,
+    reason: status === "fresh"
+      ? `Latest common market date is within ${maximumTradingDayLag} trading day of the expected cutoff.`
+      : `Latest common market date trails the expected cutoff by ${input.tradingDayLag} trading days.`,
+  };
+}
+
+export function auditDailyMarketBars(
+  rows: Array<Record<string, string>>,
+  requiredInstrumentIds: string[],
+): MarketBarCoverage {
+  const covered = new Set<string>();
+  const seen = new Set<string>();
+  let validBars = 0;
+  let duplicateBars = 0;
+  for (const row of rows) {
+    const key = `${row.date}|${row.instrument_id}`;
+    if (seen.has(key)) duplicateBars += 1;
+    seen.add(key);
+    let valid = true;
+    try { assertIsoDate(row.date); } catch { valid = false; }
+    const open = Number(row.open), high = Number(row.high), low = Number(row.low), close = Number(row.close);
+    if (![open, high, low, close].every((value) => Number.isFinite(value) && value > 0)) valid = false;
+    if (high < Math.max(open, close) || low > Math.min(open, close) || high < low) valid = false;
+    if (row.volume !== "" && (!Number.isFinite(Number(row.volume)) || Number(row.volume) < 0)) valid = false;
+    if (!row.observed_at || Number.isNaN(Date.parse(row.observed_at))) valid = false;
+    if (!row.instrument_id || !row.currency || !row.source) valid = false;
+    if (valid) {
+      validBars += 1;
+      covered.add(row.instrument_id);
+    }
+  }
+  const missingInstrumentIds = requiredInstrumentIds.filter((instrumentId) => !covered.has(instrumentId)).sort();
+  return {
+    requiredInstruments: requiredInstrumentIds.length,
+    coveredInstruments: requiredInstrumentIds.length - missingInstrumentIds.length,
+    missingInstrumentIds,
+    totalBars: rows.length,
+    validBars,
+    invalidBars: rows.length - validBars,
+    duplicateBars,
   };
 }

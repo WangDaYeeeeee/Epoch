@@ -40,8 +40,10 @@ describe("normalized satellite baseline", () => {
     const dataset = loadBaselineDataset(fixture());
     expect(dataset.healthy).toBe(true);
     expect(dataset.ledgerReconciled).toBe(false);
-    expect(dataset.checks.filter((check) => check.status === "pending")).toHaveLength(1);
+    expect(dataset.checks.filter((check) => check.status === "pending")).toHaveLength(2);
     expect(dataset.checks).toContainEqual(expect.objectContaining({ name: "market-data:daily-coverage", status: "passed" }));
+    expect(dataset.checks).toContainEqual(expect.objectContaining({ name: "market-data:freshness", status: "pending" }));
+    expect(dataset.checks).toContainEqual(expect.objectContaining({ name: "market-data:ohlcv", status: "passed" }));
     expect(dataset.checks).toContainEqual(expect.objectContaining({ name: "performance:asset-return-reconciliation", status: "passed" }));
     expect(dataset.checks).toContainEqual(expect.objectContaining({ name: "ledger:position-quantity-reconciliation", status: "passed" }));
     expect(dataset.checks.some((check) => check.name === "performance:nav-chain" && check.status === "passed")).toBe(true);

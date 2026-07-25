@@ -28,6 +28,20 @@ describe("staged satellite portfolio", () => {
       priceObservations: 11148, splitEvents: 6,
       missingInstrumentIds: [],
     });
+    expect(payload.health.marketDataFreshness).toMatchObject({
+      status: "stale",
+      latestEffectiveDate: "2026-07-16",
+      observationTimestampQuality: "filesystem_fallback",
+    });
+    expect(payload.health.marketDataFreshness?.tradingDayLag).toBeGreaterThan(1);
+    expect(payload.health.status).toBe("warning");
+    expect(payload.health.marketBarCoverage).toMatchObject({
+      requiredInstruments: 5,
+      coveredInstruments: 5,
+      invalidBars: 0,
+      duplicateBars: 0,
+      missingInstrumentIds: [],
+    });
     expect(payload.health.ledgerReplayReadiness).toMatchObject({
       total: 536, classified: 536, marketTrades: 258, derivativeTrades: 3, cashEquivalentTrades: 94,
       cashEvents: 141, fxLegs: 16, transfers: 20, adjustments: 4,
@@ -50,6 +64,12 @@ describe("staged satellite portfolio", () => {
     expect(payload.positions.map((position) => position.marketValue)).toEqual(
       [...payload.positions].map((position) => position.marketValue).sort((left, right) => right - left),
     );
+    expect(payload.meta.classificationVersion).toBe("phase2-bootstrap-v1");
+    expect(payload.exposure.totalGrossValueUsd).toBeCloseTo(60611.71068, 8);
+    expect(payload.exposure.issuerCoverage.classifiedValueUsd).toBeCloseTo(44957.41068, 8);
+    expect(payload.exposure.issuerCoverage.ratio).toBeCloseTo(0.741728128, 8);
+    expect(payload.exposure.issuerCoverage.missingInstrumentIds).toEqual(["US:SOXX"]);
+    expect(payload.exposure.issuers.find((bucket) => bucket.id === "issuer:alphabet")?.marketValueUsd).toBeCloseTo(12136.95, 8);
   });
 
   it("falls back to a fully reproducible synthetic portfolio without private data", () => {
@@ -58,5 +78,6 @@ describe("staged satellite portfolio", () => {
     expect(payload.health.ledgerBalanced).toBe(true);
     expect(payload.health.source).toBe("synthetic");
     expect(payload.series).toHaveLength(10);
+    expect(payload.exposure.issuerCoverage.ratio).toBe(1);
   });
 });

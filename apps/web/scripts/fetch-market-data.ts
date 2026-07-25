@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const DATE_FROM = "2025-01-20";
-const DATE_TO_EXCLUSIVE = "2026-07-19";
+const DATE_FROM = process.env.MARKET_DATE_FROM ?? "2025-01-20";
+const tomorrow = new Date();
+tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+const DATE_TO_EXCLUSIVE = process.env.MARKET_DATE_TO_EXCLUSIVE ?? tomorrow.toISOString().slice(0, 10);
 const SYMBOLS: Record<string, string> = {
   "US:AMD": "AMD", "US:AVGO": "AVGO", "US:BABA": "BABA", "US:DRAM": "DRAM",
   "US:FNGU": "FNGU", "US:GLD": "GLD", "US:GLL": "GLL", "US:GOOGL": "GOOGL",
@@ -18,7 +20,15 @@ const SYMBOLS: Record<string, string> = {
 type ChartResult = {
   meta: { currency: string; symbol: string };
   timestamp?: number[];
-  indicators: { quote: Array<{ close: Array<number | null> }> };
+  indicators: {
+    quote: Array<{
+      open: Array<number | null>;
+      high: Array<number | null>;
+      low: Array<number | null>;
+      close: Array<number | null>;
+      volume: Array<number | null>;
+    }>;
+  };
   events?: { splits?: Record<string, { date: number; numerator: number; denominator: number; splitRatio: string }> };
 };
 
@@ -26,6 +36,7 @@ const csvCell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""'
 const isoDate = (timestamp: number) => new Date(timestamp * 1000).toISOString().slice(0, 10);
 
 async function main(): Promise<void> {
+  const observedAt = new Date().toISOString();
   const root = resolve(process.env.EPOCH_DATA_ROOT ?? resolve(process.cwd(), "../../tmp/satellite-data"));
   const rawRoot = resolve(root, "raw/market-data");
   const normalizedRoot = resolve(root, "normalized");
@@ -34,6 +45,7 @@ async function main(): Promise<void> {
   const period1 = Math.floor(Date.parse(`${DATE_FROM}T00:00:00Z`) / 1000);
   const period2 = Math.floor(Date.parse(`${DATE_TO_EXCLUSIVE}T00:00:00Z`) / 1000);
   const prices: string[][] = [];
+  const bars: string[][] = [];
   const splits: string[][] = [];
   const manifest: Array<Record<string, unknown>> = [];
 
@@ -48,15 +60,29 @@ async function main(): Promise<void> {
     const result = payload.chart.result?.[0];
     if (!result) throw new Error(`${symbol}: ${payload.chart.error?.description ?? "missing chart result"}`);
     const timestamps = result.timestamp ?? [];
-    const closes = result.indicators.quote[0]?.close ?? [];
+    const quote = result.indicators.quote[0];
+    const closes = quote?.close ?? [];
     for (let index = 0; index < timestamps.length; index += 1) {
       if (closes[index] == null) continue;
-      prices.push([isoDate(timestamps[index]), instrumentId, String(closes[index]), result.meta.currency, "yahoo_chart_v8", symbol]);
+      const date = isoDate(timestamps[index]);
+      prices.push([date, instrumentId, String(closes[index]), result.meta.currency, "yahoo_chart_v8", symbol, observedAt]);
+      if (quote.open[index] != null && quote.high[index] != null && quote.low[index] != null) {
+        bars.push([
+          date, instrumentId, String(quote.open[index]), String(quote.high[index]), String(quote.low[index]),
+          String(closes[index]), quote.volume[index] == null ? "" : String(quote.volume[index]),
+          result.meta.currency, "yahoo_chart_v8", symbol, observedAt,
+        ]);
+      }
     }
     for (const event of Object.values(result.events?.splits ?? {})) {
       splits.push([isoDate(event.date), instrumentId, String(event.numerator), String(event.denominator), event.splitRatio, "yahoo_chart_v8", symbol]);
     }
-    manifest.push({ instrument_id: instrumentId, symbol, currency: result.meta.currency, observations: timestamps.length, sha256: createHash("sha256").update(body).digest("hex") });
+    manifest.push({
+      instrument_id: instrumentId, symbol, currency: result.meta.currency,
+      observations: timestamps.length, bars: bars.filter((row) => row[1] === instrumentId).length,
+      latest_effective_date: timestamps.length ? isoDate(timestamps.at(-1)!) : null,
+      sha256: createHash("sha256").update(body).digest("hex"),
+    });
     await new Promise((done) => setTimeout(done, 250));
   }
 
@@ -74,7 +100,8 @@ async function main(): Promise<void> {
   });
   for (const row of fundRows) {
     const date = `${row.date.slice(0, 4)}-${row.date.slice(4, 6)}-${row.date.slice(6, 8)}`;
-    prices.push([date, "FUND:HK0000502390", String(row.nav), fHkd.currencyEn, "chinaamc_full_nav_history", "HKSELMMF/F-HKD"]);
+    prices.push([date, "FUND:HK0000502390", String(row.nav), fHkd.currencyEn, "chinaamc_full_nav_history", "HKSELMMF/F-HKD", observedAt]);
+    bars.push([date, "FUND:HK0000502390", String(row.nav), String(row.nav), String(row.nav), String(row.nav), "", fHkd.currencyEn, "chinaamc_full_nav_history", "HKSELMMF/F-HKD", observedAt]);
   }
   manifest.push({
     instrument_id: "FUND:HK0000502390", symbol: "HKSELMMF/F-HKD", currency: fHkd.currencyEn,
@@ -89,7 +116,8 @@ async function main(): Promise<void> {
   const gaoTengPayload = JSON.parse(gaoTengBody) as { data?: { navList?: Array<{ date: string; fundNav: string }> } };
   const gaoTengRows = (gaoTengPayload.data?.navList ?? []).filter((row) => row.date >= DATE_FROM && row.date < DATE_TO_EXCLUSIVE);
   for (const row of gaoTengRows) {
-    prices.push([row.date, "FUND:HK0000584752", row.fundNav, "USD", "gaoteng_fund_nav", "GTWVCUS/10018002"]);
+    prices.push([row.date, "FUND:HK0000584752", row.fundNav, "USD", "gaoteng_fund_nav", "GTWVCUS/10018002", observedAt]);
+    bars.push([row.date, "FUND:HK0000584752", row.fundNav, row.fundNav, row.fundNav, row.fundNav, "", "USD", "gaoteng_fund_nav", "GTWVCUS/10018002", observedAt]);
   }
   manifest.push({
     instrument_id: "FUND:HK0000584752", symbol: "GTWVCUS/10018002", currency: "USD",
@@ -100,10 +128,11 @@ async function main(): Promise<void> {
     const content = [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
     await writeFile(resolve(normalizedRoot, name), content, "utf8");
   };
-  await writeCsv("market-prices.csv", ["date", "instrument_id", "close", "currency", "source", "source_symbol"], prices.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])));
+  await writeCsv("market-prices.csv", ["date", "instrument_id", "close", "currency", "source", "source_symbol", "observed_at"], prices.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])));
+  await writeCsv("market-bars.csv", ["date", "instrument_id", "open", "high", "low", "close", "volume", "currency", "source", "source_symbol", "observed_at"], bars.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])));
   await writeCsv("market-splits.csv", ["date", "instrument_id", "numerator", "denominator", "ratio", "source", "source_symbol"], splits.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])));
-  await writeFile(resolve(rawRoot, "manifest.json"), JSON.stringify({ date_from: DATE_FROM, date_to_exclusive: DATE_TO_EXCLUSIVE, instruments: manifest }, null, 2) + "\n", "utf8");
-  console.log(JSON.stringify({ instruments: Object.keys(SYMBOLS).length + 2, prices: prices.length, splits: splits.length, root }, null, 2));
+  await writeFile(resolve(rawRoot, "manifest.json"), JSON.stringify({ observed_at: observedAt, date_from: DATE_FROM, date_to_exclusive: DATE_TO_EXCLUSIVE, instruments: manifest }, null, 2) + "\n", "utf8");
+  console.log(JSON.stringify({ instruments: Object.keys(SYMBOLS).length + 2, prices: prices.length, bars: bars.length, splits: splits.length, observedAt, root }, null, 2));
 }
 
 main().catch((error: unknown) => {

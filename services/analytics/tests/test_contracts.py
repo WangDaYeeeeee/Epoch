@@ -32,3 +32,41 @@ def test_response_fixture_matches_shared_schema() -> None:
     response.pop("parameterSetVersion")
     response.pop("payload")
     Draft202012Validator(load_schema("calculation-response.schema.json")).validate(response)
+
+
+def test_portfolio_market_input_fixture_matches_shared_schema() -> None:
+    payload = {
+        "schemaVersion": "portfolio-market-input/1.0",
+        "asOf": "2026-07-23T01:00:00Z",
+        "baseCurrency": "USD",
+        "calendar": ".NDX",
+        "returnDefinition": {
+            "unit": "decimal",
+            "method": "close_to_close_price_return_usd",
+            "priceAdjustment": "split_adjusted",
+            "dividendTreatment": "excluded",
+            "fxAlignment": "same_effective_date_close",
+        },
+        "missingValuePolicy": "intersection_only",
+        "positions": [
+            {"instrumentId": "US:GOOGL", "quantity": "35", "marketValueUsd": "12136.95"},
+        ],
+        "series": [
+            {
+                "instrumentId": "US:GOOGL",
+                "sourceCurrency": "USD",
+                "observations": [
+                    {"date": "2026-07-21", "returnUsd": 0.01, "sourceObservedAt": "2026-07-23T01:00:00Z"},
+                    {"date": "2026-07-22", "returnUsd": -0.005, "sourceObservedAt": "2026-07-23T01:00:00Z"},
+                ],
+                "missingDates": [],
+            },
+        ],
+        "quality": {
+            "status": "complete",
+            "commonDateFrom": "2026-07-21",
+            "commonDateTo": "2026-07-22",
+            "warnings": [],
+        },
+    }
+    Draft202012Validator(load_schema("portfolio-market-input.schema.json")).validate(payload)

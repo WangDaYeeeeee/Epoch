@@ -15,3 +15,5 @@ coverage/
 data/raw/*
 !data/raw/.gitkeep
 postgres-data/
+
+.DS_Store

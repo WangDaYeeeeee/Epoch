@@ -21,6 +21,7 @@ export default async function PortfolioPage() {
         <nav>
           <a className="active" href="#overview">组合总览</a>
           <a href="#positions">当前持仓</a>
+          <a href="#exposure">持仓穿透</a>
           <a href="#health">数据健康</a>
           <a href="#reconciliation">对账明细</a>
         </nav>
@@ -51,11 +52,42 @@ export default async function PortfolioPage() {
             </div>
           </article>
           <article className="panel health" id="health">
-            <div className="panel-head"><div><h2>数据健康</h2><p>最后可信快照</p></div><span className="status">可用</span></div>
+            <div className="panel-head"><div><h2>数据健康</h2><p>最后可信快照</p></div><span className={`status ${data.health.status === "healthy" ? "" : "warning"}`}>{data.health.status === "healthy" ? "可用" : "需关注"}</span></div>
             <div className="health-score"><span style={{ flex: "0 0 32px", minWidth: 32, minHeight: 32, lineHeight: 1 }}>✓</span><div><strong>数据连续性</strong><p>{data.health.message}</p></div></div>
-            <dl><div><dt>账本守恒</dt><dd>{data.health.ledgerBalanced ? "已验证" : "待 Phase 1 对账"}</dd></div><div><dt>逐日资产收益</dt><dd>{data.health.assetReturnsReconciled ? "已验证" : "待对账"}</dd></div>{data.health.dailyLedgerValuation && <div><dt>逐日账本估值</dt><dd>{data.health.dailyLedgerValuation.valuedDays} 独立 · {data.health.dailyLedgerValuation.residualBridgeDays} 残差 · {data.health.dailyLedgerValuation.accountedDays}/{data.health.dailyLedgerValuation.totalDays} 已入账</dd></div>}{data.health.eventCoverage && <div><dt>事件归一化</dt><dd>{data.health.eventCoverage.classified}/{data.health.eventCoverage.total}</dd></div>}{data.health.valuationCoverage && <div><dt>报告估值换汇</dt><dd>{data.health.valuationCoverage.fxReconciled}/{data.health.valuationCoverage.total} · {data.health.valuationCoverage.missingFx === 0 ? "已覆盖" : `${data.health.valuationCoverage.missingFx} 待补`}</dd></div>}{data.health.marketDataRequirement && <div><dt>日频行情输入</dt><dd>{data.health.marketDataCoverage ? `${data.health.marketDataCoverage.coveredSecurities}/${data.health.marketDataCoverage.requiredSecurities} 标的 · ${data.health.marketDataCoverage.coveredFxPairs}/${data.health.marketDataCoverage.requiredFxPairs} 汇率` : `${data.health.marketDataRequirement.canonicalInstrumentIds.length} 标的 · ${data.health.marketDataRequirement.fxPairs.length} 汇率待接入`}</dd></div>}<div><dt>时间加权收益 TWR</dt><dd>{percent(data.summary.portfolioReturn)}</dd></div>{data.summary.moneyWeightedReturn !== undefined && <div><dt>资金加权收益 MWR</dt><dd>{percent(data.summary.moneyWeightedReturn)} 年化</dd></div>}{data.summary.cumulativeMoneyWeightedReturn !== undefined && <div><dt>MWR 区间累计</dt><dd>{percent(data.summary.cumulativeMoneyWeightedReturn)}</dd></div>}<div><dt>数据来源</dt><dd>{data.health.source === "database-baseline" ? "PostgreSQL 基线" : data.health.source === "private-staging" ? "本地清洗数据" : "合成数据"}</dd></div><div><dt>策略版本</dt><dd>{data.meta.strategyVersion}</dd></div></dl>
+            <dl><div><dt>账本守恒</dt><dd>{data.health.ledgerBalanced ? "已验证" : "待 Phase 1 对账"}</dd></div><div><dt>逐日资产收益</dt><dd>{data.health.assetReturnsReconciled ? "已验证" : "待对账"}</dd></div>{data.health.dailyLedgerValuation && <div><dt>逐日账本估值</dt><dd>{data.health.dailyLedgerValuation.valuedDays} 独立 · {data.health.dailyLedgerValuation.residualBridgeDays} 残差 · {data.health.dailyLedgerValuation.accountedDays}/{data.health.dailyLedgerValuation.totalDays} 已入账</dd></div>}{data.health.eventCoverage && <div><dt>事件归一化</dt><dd>{data.health.eventCoverage.classified}/{data.health.eventCoverage.total}</dd></div>}{data.health.valuationCoverage && <div><dt>报告估值换汇</dt><dd>{data.health.valuationCoverage.fxReconciled}/{data.health.valuationCoverage.total} · {data.health.valuationCoverage.missingFx === 0 ? "已覆盖" : `${data.health.valuationCoverage.missingFx} 待补`}</dd></div>}{data.health.marketDataRequirement && <div><dt>日频行情输入</dt><dd>{data.health.marketDataCoverage ? `${data.health.marketDataCoverage.coveredSecurities}/${data.health.marketDataCoverage.requiredSecurities} 标的 · ${data.health.marketDataCoverage.coveredFxPairs}/${data.health.marketDataCoverage.requiredFxPairs} 汇率` : `${data.health.marketDataRequirement.canonicalInstrumentIds.length} 标的 · ${data.health.marketDataRequirement.fxPairs.length} 汇率待接入`}</dd></div>}{data.health.marketDataFreshness && <div><dt>日频行情时效</dt><dd>{data.health.marketDataFreshness.status === "fresh" ? "新鲜" : data.health.marketDataFreshness.status === "stale" ? "已过期" : "缺失"} · 截至 {data.health.marketDataFreshness.latestEffectiveDate ?? "未知"}{data.health.marketDataFreshness.tradingDayLag != null ? ` · ${data.health.marketDataFreshness.tradingDayLag} 交易日` : ""}</dd></div>}{data.health.marketBarCoverage && <div><dt>OHLCV 输入</dt><dd>{data.health.marketBarCoverage.coveredInstruments}/{data.health.marketBarCoverage.requiredInstruments} 当前标的 · {data.health.marketBarCoverage.invalidBars} 无效</dd></div>}{data.health.brokerConnection && <div><dt>IBKR 只读连接</dt><dd>{data.health.brokerConnection.status === "connected" ? "已连接" : data.health.brokerConnection.status === "not_configured" ? "未配置" : data.health.brokerConnection.status === "authentication_required" ? "待认证" : "不可用"} · {data.health.brokerConnection.capability}</dd></div>}<div><dt>时间加权收益 TWR</dt><dd>{percent(data.summary.portfolioReturn)}</dd></div>{data.summary.moneyWeightedReturn !== undefined && <div><dt>资金加权收益 MWR</dt><dd>{percent(data.summary.moneyWeightedReturn)} 年化</dd></div>}{data.summary.cumulativeMoneyWeightedReturn !== undefined && <div><dt>MWR 区间累计</dt><dd>{percent(data.summary.cumulativeMoneyWeightedReturn)}</dd></div>}<div><dt>数据来源</dt><dd>{data.health.source === "database-baseline" ? "PostgreSQL 基线" : data.health.source === "private-staging" ? "本地清洗数据" : "合成数据"}</dd></div><div><dt>策略版本</dt><dd>{data.meta.strategyVersion}</dd></div></dl>
           </article>
         </div>
+        <article className="panel exposure-panel" id="exposure">
+          <div className="panel-head">
+            <div><h2>持仓穿透</h2><p>总市值敞口 · 分类版本 {data.meta.classificationVersion}</p></div>
+            <span className={data.exposure.issuerCoverage.ratio === 1 ? "reconciliation-status passed" : "reconciliation-status pending"}>
+              发行人覆盖 {(data.exposure.issuerCoverage.ratio * 100).toFixed(1)}%
+            </span>
+          </div>
+          <div className="exposure-grid">
+            <section>
+              <h3>发行人</h3>
+              {data.exposure.issuers.slice(0, 6).map((bucket) => (
+                <div className="exposure-row" key={bucket.id}><span>{bucket.name}</span><strong>{(bucket.weight * 100).toFixed(1)}%</strong></div>
+              ))}
+            </section>
+            <section>
+              <h3>币种</h3>
+              {data.exposure.currencies.map((bucket) => (
+                <div className="exposure-row" key={bucket.id}><span>{bucket.name}</span><strong>{(bucket.weight * 100).toFixed(1)}%</strong></div>
+              ))}
+            </section>
+            <section>
+              <h3>资产类别</h3>
+              {data.exposure.assetClasses.map((bucket) => (
+                <div className="exposure-row" key={bucket.id}><span>{bucket.name}</span><strong>{(bucket.weight * 100).toFixed(1)}%</strong></div>
+              ))}
+            </section>
+          </div>
+          {data.exposure.issuerCoverage.missingInstrumentIds.length > 0 && (
+            <p className="exposure-note">待接入底层持仓：{data.exposure.issuerCoverage.missingInstrumentIds.join("、")}。未穿透部分保留为“待穿透”，不归入基金管理人。</p>
+          )}
+        </article>
         {data.health.positionReconciliation && (
           <article className="panel reconciliation" id="reconciliation">
             <div className="panel-head">

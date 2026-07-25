@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { checkIbkrReadOnlyConnection } from "@/lib/connectors/ibkr-web";
 import { getAnalyticsHealth } from "@/lib/server/analytics-client";
 import { createDatabaseClient } from "@/lib/server/database";
 import { resolveDataRoot } from "@/lib/server/portfolio";
@@ -20,11 +21,13 @@ export async function GET() {
     } catch (error) {
       analytics = { status: "unavailable", detail: error instanceof Error ? error.message : "unknown" };
     }
+    const brokerConnection = await checkIbkrReadOnlyConnection({ baseUrl: process.env.IBKR_WEB_API_URL });
     return NextResponse.json({
       status: analytics.status === "connected" ? "ok" : "degraded",
       database: "connected",
       migrations: migration?.count ?? 0,
       analytics,
+      brokerConnection,
       portfolioSource: baseline?.count ? "database-baseline" : resolveDataRoot() ? "private-staging" : "synthetic",
       tradingCapability: "read_only",
     }, { status: analytics.status === "connected" ? 200 : 503 });

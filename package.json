@@ -18,6 +18,7 @@
     "baseline:check": "pnpm --filter @epoch/web baseline:check",
     "baseline:import": "pnpm --filter @epoch/web baseline:import",
     "market:fetch": "pnpm --filter @epoch/web market:fetch",
+    "market:normalize": "pnpm --filter @epoch/web market:normalize",
     "import:flex": "pnpm --filter @epoch/web import:flex",
     "scheduler": "pnpm --filter @epoch/web scheduler",
     "scheduler:once": "pnpm --filter @epoch/web scheduler:once"

@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://epoch.local/contracts/analytics/v1/portfolio-market-input.schema.json",
+  "title": "Epoch aligned portfolio market input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "asOf",
+    "baseCurrency",
+    "calendar",
+    "returnDefinition",
+    "missingValuePolicy",
+    "positions",
+    "series",
+    "quality"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "portfolio-market-input/1.0" },
+    "asOf": { "type": "string", "format": "date-time" },
+    "baseCurrency": { "const": "USD" },
+    "calendar": { "const": ".NDX" },
+    "returnDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "method", "priceAdjustment", "dividendTreatment", "fxAlignment"],
+      "properties": {
+        "unit": { "const": "decimal" },
+        "method": { "const": "close_to_close_price_return_usd" },
+        "priceAdjustment": { "const": "split_adjusted" },
+        "dividendTreatment": { "const": "excluded" },
+        "fxAlignment": { "const": "same_effective_date_close" }
+      }
+    },
+    "missingValuePolicy": {
+      "enum": ["reject", "intersection_only", "explicit_null"]
+    },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instrumentId", "quantity", "marketValueUsd"],
+        "properties": {
+          "instrumentId": { "type": "string", "pattern": "^[^:]+:.+$" },
+          "quantity": { "type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$" },
+          "marketValueUsd": { "type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$" }
+        }
+      }
+    },
+    "series": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instrumentId", "sourceCurrency", "observations", "missingDates"],
+        "properties": {
+          "instrumentId": { "type": "string", "pattern": "^[^:]+:.+$" },
+          "sourceCurrency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+          "observations": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["date", "returnUsd", "sourceObservedAt"],
+              "properties": {
+                "date": { "type": "string", "format": "date" },
+                "returnUsd": { "type": ["number", "null"] },
+                "sourceObservedAt": { "type": "string", "format": "date-time" }
+              }
+            }
+          },
+          "missingDates": {
+            "type": "array",
+            "items": { "type": "string", "format": "date" },
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "commonDateFrom", "commonDateTo", "warnings"],
+      "properties": {
+        "status": { "enum": ["complete", "degraded"] },
+        "commonDateFrom": { "type": "string", "format": "date" },
+        "commonDateTo": { "type": "string", "format": "date" },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

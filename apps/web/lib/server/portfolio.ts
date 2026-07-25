@@ -2,6 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Sql } from "postgres";
 import type { PortfolioPayload } from "@/lib/types";
+import { checkIbkrReadOnlyConnection } from "../connectors/ibkr-web";
+import { buildExposureSnapshot } from "../domain/exposure";
+import { INSTRUMENT_CLASSIFICATION_VERSION, instrumentClassifications } from "../domain/instrument-classifications";
 import { calculateMoneyWeightedReturn, performanceCashFlows } from "../domain/performance";
 import { marketDataRequirement } from "../domain/market-data";
 import { loadBaselineDataset, reconcileEventCoverage, reconcilePerformanceReturns, reconcilePositionQuantities, reconcileReportedValuations, type EventCoverage, type PositionReconciliation, type ValuationCoverage } from "./baseline-data";
@@ -41,6 +44,8 @@ export function loadPortfolio(root = resolveDataRoot()): PortfolioPayload {
     valuationCoverage: baseline.valuationCoverage,
     marketDataRequirement: baseline.marketDataRequirement,
     marketDataCoverage: baseline.marketDataCoverage,
+    marketDataFreshness: baseline.marketDataFreshness,
+    marketBarCoverage: baseline.marketBarCoverage,
     ledgerReplayReadiness: baseline.ledgerReplayReadiness,
     cashEndpointReconciliation: baseline.cashEndpointReconciliation,
     dailyLedgerReplay: baseline.dailyLedgerReplay,
@@ -60,6 +65,8 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
   valuationCoverage?: ValuationCoverage;
   marketDataRequirement?: PortfolioPayload["health"]["marketDataRequirement"];
   marketDataCoverage?: PortfolioPayload["health"]["marketDataCoverage"];
+  marketDataFreshness?: PortfolioPayload["health"]["marketDataFreshness"];
+  marketBarCoverage?: PortfolioPayload["health"]["marketBarCoverage"];
   ledgerReplayReadiness?: PortfolioPayload["health"]["ledgerReplayReadiness"];
   cashEndpointReconciliation?: PortfolioPayload["health"]["cashEndpointReconciliation"];
   dailyLedgerReplay?: PortfolioPayload["health"]["dailyLedgerReplay"];
@@ -105,21 +112,31 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
   // The cleaned latest snapshot contains one non-USD currency. Reconcile its USD
   // conversion to the authoritative portfolio total instead of hard-coding live FX.
   const foreignToUsd = foreignCurrencies.size === 1 && foreignValue ? (latest.nav - usdValue) / foreignValue : 0;
-  const valueInUsd = (row: Row) => row.currency === "USD" ? Number(row.market_value) : Number(row.market_value) * foreignToUsd;
+  const valueInUsd = (row: Row) => row.market_value_base
+    ? Number(row.market_value_base)
+    : row.currency === "USD" ? Number(row.market_value) : Number(row.market_value) * foreignToUsd;
   const portfolioReturn = latest.portfolio / first.portfolio - 1, benchmarkReturn = latest.benchmark / first.benchmark - 1;
   const moneyWeightedReturn = calculateMoneyWeightedReturn(performanceCashFlows(performance.map((row) => ({
     date: row.date, total_assets: row.total_assets, net_external_flow: row.net_external_flow,
   }))));
+  const currentPositions = currentRows
+    .filter((row) => !["cash", "other"].includes(row.category))
+    .map((row) => ({ instrumentId: row.instrument_id, symbol: row.ticker, name: row.name, quantity: Number(row.quantity), marketValue: valueInUsd(row), currency: row.currency, assetClass: row.category }))
+    .sort((left, right) => right.marketValue - left.marketValue);
+  const exposure = buildExposureSnapshot(currentPositions.map((position) => ({
+    instrumentId: position.instrumentId,
+    marketValueUsd: position.marketValue,
+    currency: position.currency,
+    assetClass: position.assetClass,
+  })), instrumentClassifications);
   return {
-    meta: { account: "FUTU-2189 + IBKR-8602", asOf: latest.date, baseCurrency: "USD", benchmark: ".NDX", strategyVersion: "epoch-satellite-v0.1.0" },
+    meta: { account: "FUTU-2189 + IBKR-8602", asOf: latest.date, baseCurrency: "USD", benchmark: ".NDX", strategyVersion: "epoch-satellite-v0.1.0", classificationVersion: INSTRUMENT_CLASSIFICATION_VERSION },
     summary: { nav: latest.nav, cash: currentRows.filter((row) => row.category === "cash").reduce((sum, row) => sum + valueInUsd(row), 0), portfolioReturn, benchmarkReturn, activeReturn: portfolioReturn - benchmarkReturn, maxDrawdown: Math.min(...series.map((point) => point.drawdown)), moneyWeightedReturn: moneyWeightedReturn?.annualized, cumulativeMoneyWeightedReturn: moneyWeightedReturn?.cumulative },
     series, events,
-    positions: currentRows
-      .filter((row) => !["cash", "other"].includes(row.category))
-      .map((row) => ({ symbol: row.ticker, name: row.name, quantity: Number(row.quantity), marketValue: valueInUsd(row), currency: row.currency }))
-      .sort((left, right) => right.marketValue - left.marketValue),
+    positions: currentPositions,
+    exposure,
     health: {
-      status: health.healthy ? "healthy" : "warning",
+      status: health.healthy && health.marketDataFreshness?.status !== "stale" && health.marketDataFreshness?.status !== "missing" ? "healthy" : "warning",
       ledgerBalanced: health.ledgerBalanced ?? false,
       reconciliationDifference: health.reconciliationDifference ?? 0,
       source: health.source,
@@ -130,6 +147,8 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
       valuationCoverage: health.valuationCoverage,
       marketDataRequirement: health.marketDataRequirement,
       marketDataCoverage: health.marketDataCoverage,
+      marketDataFreshness: health.marketDataFreshness,
+      marketBarCoverage: health.marketBarCoverage,
       ledgerReplayReadiness: health.ledgerReplayReadiness,
       cashEndpointReconciliation: health.cashEndpointReconciliation,
       dailyLedgerReplay: health.dailyLedgerReplay,
@@ -200,6 +219,8 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
       valuationCoverage,
       marketDataRequirement: requirement,
       marketDataCoverage: stagedBaseline?.marketDataCoverage,
+      marketDataFreshness: stagedBaseline?.marketDataFreshness,
+      marketBarCoverage: stagedBaseline?.marketBarCoverage,
       ledgerReplayReadiness: stagedBaseline?.ledgerReplayReadiness,
       cashEndpointReconciliation: stagedBaseline?.cashEndpointReconciliation,
       dailyLedgerReplay: stagedBaseline?.dailyLedgerReplay,
@@ -210,11 +231,12 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
 
 export async function loadPortfolioPreferDatabase(): Promise<PortfolioPayload> {
   const sql = createDatabaseClient();
+  let payload: PortfolioPayload;
   try {
-    return await loadPortfolioFromDatabase(sql) ?? loadPortfolio();
+    payload = await loadPortfolioFromDatabase(sql) ?? loadPortfolio();
   } catch {
     const fallback = loadPortfolio();
-    return {
+    payload = {
       ...fallback,
       health: {
         ...fallback.health,
@@ -225,6 +247,14 @@ export async function loadPortfolioPreferDatabase(): Promise<PortfolioPayload> {
   } finally {
     await sql.end();
   }
+  const brokerConnection = await checkIbkrReadOnlyConnection({ baseUrl: process.env.IBKR_WEB_API_URL });
+  return {
+    ...payload,
+    health: {
+      ...payload.health,
+      brokerConnection,
+    },
+  };
 }
 
 function loadDemoPortfolio(): PortfolioPayload {
@@ -259,7 +289,7 @@ function loadDemoPortfolio(): PortfolioPayload {
   const portfolioReturn = latest.navCents / first.navCents - 1;
   const benchmarkReturn = latest.benchmarkIndex - 1;
   return {
-    meta: { account: "DEMO-SATELLITE-USD", asOf: latest.date, baseCurrency: "USD", benchmark: ".NDX", strategyVersion: "epoch-satellite-v0.1.0" },
+    meta: { account: "DEMO-SATELLITE-USD", asOf: latest.date, baseCurrency: "USD", benchmark: ".NDX", strategyVersion: "epoch-satellite-v0.1.0", classificationVersion: INSTRUMENT_CLASSIFICATION_VERSION },
     summary: {
       nav: latest.navCents / 100,
       cash: latest.cashCents / 100,
@@ -271,12 +301,20 @@ function loadDemoPortfolio(): PortfolioPayload {
     series,
     events: [],
     positions: Object.entries(latest.positions).map(([instrumentId, quantity]) => ({
+      instrumentId,
       symbol: instrumentId.split(":").at(-1)!,
       name: names[instrumentId] ?? instrumentId,
       quantity,
       marketValue: quantity * (prices.get(instrumentId) ?? 0),
       currency: "USD",
+      assetClass: "stock",
     })).sort((left, right) => right.marketValue - left.marketValue),
+    exposure: buildExposureSnapshot(Object.entries(latest.positions).map(([instrumentId, quantity]) => ({
+      instrumentId,
+      marketValueUsd: quantity * (prices.get(instrumentId) ?? 0),
+      currency: "USD",
+      assetClass: "stock",
+    })), instrumentClassifications),
     health: {
       status: calculation.health.balanced ? "healthy" : "warning",
       ledgerBalanced: calculation.health.balanced,

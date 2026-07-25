@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { assertCurrency, assertIsoDate } from "../domain/conventions";
-import { CASH_EQUIVALENT_INSTRUMENTS, isDerivativeInstrumentId, marketDataRequirement, type MarketDataRequirement } from "../domain/market-data";
+import { isTradingDay, NDX_CALENDAR, previousTradingDay } from "../domain/calendar";
+import { assertCurrency, assertIsoDate, EPOCH_CONVENTIONS } from "../domain/conventions";
+import { auditDailyMarketBars, CASH_EQUIVALENT_INSTRUMENTS, currentPositionMarketDataRequirement, evaluateMarketDataFreshness, isDerivativeInstrumentId, marketDataRequirement, type MarketBarCoverage, type MarketDataFreshness, type MarketDataRequirement } from "../domain/market-data";
 import { ledgerReplayReadiness, reconcileCashEndpoints, replayLedgerDaily, type CashEndpointReconciliation, type LedgerReplayReadiness } from "../domain/ledger-replay";
 import { valueDailyLedger } from "../domain/ledger-valuation";
 import { parseCsv } from "./csv";
@@ -59,6 +60,8 @@ export type BaselineDataset = {
   valuationCoverage: ValuationCoverage;
   marketDataRequirement: MarketDataRequirement;
   marketDataCoverage: MarketDataCoverage;
+  marketDataFreshness: MarketDataFreshness;
+  marketBarCoverage: MarketBarCoverage;
   ledgerReplayReadiness: LedgerReplayReadiness;
   cashEndpointReconciliation: CashEndpointReconciliation;
   dailyLedgerReplay: DailyLedgerReplaySummary;
@@ -95,6 +98,77 @@ export function loadMarketDataCoverage(root: string, requirement: MarketDataRequ
     missingInstrumentIds, requiredFxPairs: requirement.fxPairs.length, coveredFxPairs,
     priceObservations: prices.length, splitEvents: splits.length,
   };
+}
+
+function tradingDayLag(latestEffectiveDate: string, expectedThroughDate: string): number {
+  if (latestEffectiveDate >= expectedThroughDate) return 0;
+  const cursor = new Date(`${latestEffectiveDate}T12:00:00Z`);
+  let lag = 0;
+  while (cursor.toISOString().slice(0, 10) < expectedThroughDate) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    if (isTradingDay(cursor.toISOString().slice(0, 10), NDX_CALENDAR)) lag += 1;
+  }
+  return lag;
+}
+
+export function loadMarketDataFreshness(
+  root: string,
+  requirement: MarketDataRequirement,
+  asOfDate = currentDateInTimeZone(EPOCH_CONVENTIONS.reportingTimezone),
+): MarketDataFreshness {
+  assertIsoDate(asOfDate);
+  const pricePath = resolve(root, "normalized/market-prices.csv");
+  const manifestPath = resolve(root, "raw/market-data/manifest.json");
+  const prices = existsSync(pricePath) ? parseCsv(readFileSync(pricePath, "utf8")) : [];
+  const requiredIds = [...requirement.canonicalInstrumentIds, ...requirement.fxPairs.map((pair) => `FX:${pair}`)];
+  const latestById = new Map<string, string>();
+  for (const row of prices) {
+    if (!requiredIds.includes(row.instrument_id)) continue;
+    if (!latestById.has(row.instrument_id) || row.date > latestById.get(row.instrument_id)!) latestById.set(row.instrument_id, row.date);
+  }
+  const latestEffectiveDate = requiredIds.length > 0 && requiredIds.every((instrumentId) => latestById.has(instrumentId))
+    ? requiredIds.map((instrumentId) => latestById.get(instrumentId)!).sort()[0]
+    : null;
+  const expectedThroughDate = previousTradingDay(asOfDate, NDX_CALENDAR);
+
+  let observedAt: string | null = null;
+  let observationTimestampQuality: MarketDataFreshness["observationTimestampQuality"] = "missing";
+  if (existsSync(manifestPath)) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { observed_at?: string };
+    if (manifest.observed_at && !Number.isNaN(Date.parse(manifest.observed_at))) {
+      observedAt = new Date(manifest.observed_at).toISOString();
+      observationTimestampQuality = "authoritative";
+    } else {
+      observedAt = statSync(manifestPath).mtime.toISOString();
+      observationTimestampQuality = "filesystem_fallback";
+    }
+  }
+  return evaluateMarketDataFreshness({
+    latestEffectiveDate,
+    expectedThroughDate,
+    tradingDayLag: latestEffectiveDate ? tradingDayLag(latestEffectiveDate, expectedThroughDate) : null,
+    observedAt,
+    observationTimestampQuality,
+  });
+}
+
+export function loadMarketBarCoverage(root: string, requirement: MarketDataRequirement): MarketBarCoverage {
+  const barsPath = resolve(root, "normalized/market-bars.csv");
+  const bars = existsSync(barsPath) ? parseCsv(readFileSync(barsPath, "utf8")) : [];
+  // Security OHLCV and FX close alignment are separate contracts. Some FX
+  // providers do not publish internally consistent intraday high/low fields,
+  // so FX is validated by daily close coverage and freshness instead.
+  const requiredInstrumentIds = requirement.canonicalInstrumentIds;
+  const required = new Set(requiredInstrumentIds);
+  return auditDailyMarketBars(bars.filter((row) => required.has(row.instrument_id)), requiredInstrumentIds);
+}
+
+function currentDateInTimeZone(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 export type PositionDifference = {
@@ -313,6 +387,9 @@ export function loadBaselineDataset(root: string): BaselineDataset {
   const valuationCoverage = reconcileReportedValuations(rows["positions.csv"]);
   const marketRequirement = marketDataRequirement(rows["transactions.csv"], rows["performance.csv"]);
   const marketCoverage = loadMarketDataCoverage(root, marketRequirement);
+  const currentMarketRequirement = currentPositionMarketDataRequirement(rows["positions.csv"]);
+  const marketFreshness = loadMarketDataFreshness(root, currentMarketRequirement);
+  const marketBarCoverage = loadMarketBarCoverage(root, currentMarketRequirement);
   const splitPath = resolve(root, "normalized/market-splits.csv");
   const pricePath = resolve(root, "normalized/market-prices.csv");
   const splits = existsSync(splitPath) ? parseCsv(readFileSync(splitPath, "utf8")) : [];
@@ -341,7 +418,7 @@ export function loadBaselineDataset(root: string): BaselineDataset {
     terminalDifferenceUsd: dailyValuation.terminalDifferenceUsd,
     missingInstrumentIds: dailyValuation.missingInstrumentIds,
   };
-  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, valuationCoverage, marketDataRequirement: marketRequirement, marketDataCoverage: marketCoverage, ledgerReplayReadiness: replayReadiness, cashEndpointReconciliation, dailyLedgerReplay, dailyLedgerValuation, healthy: false, ledgerReconciled: false };
+  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, valuationCoverage, marketDataRequirement: marketRequirement, marketDataCoverage: marketCoverage, marketDataFreshness: marketFreshness, marketBarCoverage, ledgerReplayReadiness: replayReadiness, cashEndpointReconciliation, dailyLedgerReplay, dailyLedgerValuation, healthy: false, ledgerReconciled: false };
   validateKeys(rows, checks);
   validateScope(dataset);
   validatePerformanceChain(dataset);
@@ -351,6 +428,17 @@ export function loadBaselineDataset(root: string): BaselineDataset {
     name: "market-data:daily-coverage",
     status: marketCoverage.missingInstrumentIds.length || marketCoverage.coveredFxPairs !== marketCoverage.requiredFxPairs ? "pending" : "passed",
     detail: `${marketCoverage.coveredSecurities}/${marketCoverage.requiredSecurities} canonical securities and ${marketCoverage.coveredFxPairs}/${marketCoverage.requiredFxPairs} FX pairs covered by ${marketCoverage.priceObservations} observations; missing ${marketCoverage.missingInstrumentIds.join(", ") || "none"}`,
+  });
+  dataset.checks.push({
+    name: "market-data:freshness",
+    status: marketFreshness.status === "fresh" ? "passed" : "pending",
+    detail: `${marketFreshness.status}; latest common effective date ${marketFreshness.latestEffectiveDate ?? "missing"}, expected through ${marketFreshness.expectedThroughDate}, observed at ${marketFreshness.observedAt ?? "missing"} (${marketFreshness.observationTimestampQuality})`,
+  });
+  dataset.checks.push({
+    name: "market-data:ohlcv",
+    status: marketBarCoverage.coveredInstruments === marketBarCoverage.requiredInstruments
+      && marketBarCoverage.invalidBars === 0 && marketBarCoverage.duplicateBars === 0 ? "passed" : "pending",
+    detail: `${marketBarCoverage.coveredInstruments}/${marketBarCoverage.requiredInstruments} current instruments covered by ${marketBarCoverage.validBars} valid bars; ${marketBarCoverage.invalidBars} invalid, ${marketBarCoverage.duplicateBars} duplicate; missing ${marketBarCoverage.missingInstrumentIds.join(", ") || "none"}`,
   });
   addCheck(dataset.checks, "ledger:daily-state-replay", dailyReplay.days === rows["performance.csv"].length && dailyReplay.transactionEventsApplied === rows["transactions.csv"].length && dailyReplay.splitEventsApplied === marketCoverage.splitEvents, `${dailyReplay.days} daily states; ${dailyReplay.transactionEventsApplied}/${rows["transactions.csv"].length} transactions and ${dailyReplay.splitEventsApplied}/${marketCoverage.splitEvents} splits applied`);
   dataset.checks.push({
