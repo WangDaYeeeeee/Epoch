@@ -111,10 +111,44 @@ pnpm build
 
 领域测试覆盖券商代码归并、直接发行人聚合、ETF 部分穿透、未覆盖残差和空头总敞口口径。
 
+## 已知阻塞：SOXX 底层持仓数据源（2026-07-25）
+
+ETF 底层持仓穿透当前**因数据源受阻而挂起**，不是实现难度问题。
+
+已在所有者授权下尝试联网抓取 iShares 官方持仓 CSV，端点取自 SOXX 产品页自身引用的地址：
+
+```
+https://www.ishares.com/us/products/239705/ishares-semiconductor-etf/1467271812596.ajax?fileType=csv&fileName=SOXX_holdings&dataType=fund
+```
+
+响应为服务端门禁：HTTP 200，响应头声明 `content-type: text/csv` 与 `content-disposition: attachment; filename=SOXX_holdings.csv`，但 body 返回产品页 HTML（`x-page-name: products/overview-v3`）。已排除 URL 拼写、产品路径（`ishares-phlx-semiconductor-etf` 与 `ishares-semiconductor-etf` 均试）、`Accept: text/csv` 与 `Referer` 等常规请求头因素，四次尝试均返回 HTML。
+
+**未采用的绕行手段**：先访问页面获取 session cookie 后重放、解析页面内嵌的持仓 JS、伪造更完整的浏览器指纹。以上均属规避对方访问控制，不在"抓取公开数据"的授权范围内，后续接手者同样不应采用。
+
+已验证 SEC EDGAR（iShares Trust，CIK `1100663`）可正常程序化访问，可作为备选。
+
+可选路径与取舍：
+
+| 路径 | 数据质量 | 代价 |
+|---|---|---|
+| 所有者在浏览器手动下载 | 官方、当日、含 `as_of` | 需人工操作；实现为 importer，与 `market:normalize` 离线模式一致 |
+| SEC N-PORT | 官方、可程序化、不可变 | 季度申报且最长 60 天延迟，对 ETF 穿透偏陈旧 |
+| 第三方行情商 ETF 成分 API | 日频、可自动化 | 需评估付费与口径；非官方一手 |
+
+倾向手动下载：SOXX 为被动指数 ETF、约 30 个成分、以季度调仓为主，而穿透合并敞口按 STRATEGY 2.3 属调仓时查看的监控项，不需要日频自动刷新。
+
 ## 下一切片
 
-1. 接入带 `as_of` 和来源哈希的 ETF 官方底层持仓，计算持仓重叠——当前发行人穿透覆盖率 `74.17%`，缺口全部来自 `US:SOXX`；
-2. 实现行业、地域与主题穿透，支撑 STRATEGY 3.3.1 判据一"组合原本是否存在明显单股或行业集中"的判断；
-3. 在 Phase 3 模型实现前固化模型专属输出 Schema v1。
+1. **实现行业、地域与主题穿透**——不依赖 ETF 数据即可对 7 个直接持仓完整实现，`US:SOXX` 沿用现有"待穿透"桶降级模式。支撑 STRATEGY 3.3.1 判据一"组合原本是否存在明显单股或行业集中"的判断；
+2. ETF 官方底层持仓与持仓重叠——**待上节数据源解除阻塞后进行**。当前发行人穿透覆盖率 `74.17%`，缺口全部来自 `US:SOXX`（最新快照 `15,654.30 USD`）；
+3. 模型专属输出 Schema v1——**建议移至 Phase 3A 开工时与风险模型一并固化**，不在 Phase 2 内阻塞。
 
 待所有者授权的运维项：现有必需行情共同最新有效日为 `2026-07-16`，需联网刷新（`pnpm market:fetch` 会将标的列表发送给对应公开数据源）。
+
+## 交接状态（2026-07-25）
+
+- 分支 `feat/strategy-v0.5-alignment`，工作区干净，尚未合并回 `main`；
+- 测试全绿：`apps/web` 48 passed / 3 skipped，`services/analytics` 6 passed；
+- 文档已全部对齐策略 v0.5，详见 ROADMAP v0.5、DESIGN v0.3、ARCHITECTURE v0.4 的变更摘要；
+- `frameworks/policies/default-draft-v0.1.0.json` 按所有者决定原地改版（未新增 v0.2.0），内容哈希已同步更新至 `migrations/0002_seed_phase0.sql`；
+- **待所有者回看**：STRATEGY 第 6 节"待校准参数汇总"未收录 3.3.1 回补执行表中第二批的触发条件"卡口连续 5 个交易日通过"。该值是 Policy Gate 需机械执行的参数，已作为 `refill_batch2_clear_trading_days: 5` 写入参数集，但策略汇总表仍缺这一行。
