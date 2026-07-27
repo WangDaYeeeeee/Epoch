@@ -1,9 +1,9 @@
 # Epoch 技术架构
 
-状态：Draft v0.4
-日期：2026-07-25
+状态：Draft v0.5
+日期：2026-07-26
 
-> v0.4 变更摘要：对齐《投资策略》大改——`policy` 收敛为唯一硬卡口 σₚ ≤ 45%，`analytics` 不再求解权重（ERC / θ 合成移除），HAR-IV-J 改为 SHAR-IV-J（符号跳跃 ΔJ）；新增 `VolatilityAnchor`、`WeightTier`、`RefillPlan` / `RefillBatch`，`ViewAllocation` 退役；确定不接入 TWS / Client Portal Gateway，期权链与日内收益标记为待补数据源。
+> v0.5 变更摘要：ETF 穿透采用自动发现、可替换 Holdings Provider、版本化快照与最后可信状态；调仓新增 ETF 不修改领域代码，发行人文件与手工 CSV 仅作兜底。v0.4 已完成策略大改与券商接入边界对齐。
 
 ## 1. 架构目标
 
@@ -118,7 +118,7 @@ Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化
 
 ### 5.4 exposure
 
-负责证券到发行人、ETF 底层持仓、行业、地域、币种、主题与因子的映射。穿透敞口用于解释风险来源，不自行生成仓位上限。
+负责证券到发行人、ETF 底层持仓、行业、地域、币种、主题与因子的映射。它从最新持仓自动发现基金，不保存任何 SOXX 等单一产品的特例；ETF 成分由 connectors 的统一 Holdings Provider 契约输入。穿透敞口用于解释风险来源，不自行生成仓位上限。
 
 ### 5.5 analytics
 
@@ -173,6 +173,7 @@ Web UI 和 Agent Gateway 共享同一 TypeScript 领域服务。Scheduler 固化
 |---|---|---|---|
 | 账本 | 交易、现金、股息、费用、公司行动 | IBKR Flex Web Service | 每日 |
 | 价格与汇率 | OHLC、指数、基准、USD 统一收益 | 独立日频行情源 | 日频 |
+| ETF 底层持仓 | 成分、权重、持股数与基金内市值 | 发行人文件自动导入；结构化付费 API 可选 | 调仓分析前或快照过期时 |
 | 日内收益 | 严格口径的 RS± / ΔJ | 待补数据源（当前用日频近似） | — |
 | 期权 | IV、skew、GEX 与期限结构 | 待补数据源 | — |
 | 指数隐波与隐含相关性 | 系统性 vs 特质性判据 | CBOE 公开数据 | 日频 |
@@ -196,6 +197,21 @@ IBKR Flex Activity Statement 作为日终可对账账本，不用于实时轮询
 
 每个数据集记录最后成功时间、应有截止时间、质量状态和降级原因。数据不新鲜时不得静默沿用“正常”状态。
 
+### 6.3 ETF Holdings Provider
+
+ETF 穿透与单一发行人的网页或文件格式解耦。Scheduler 从最新非零持仓识别基金集合，按 `(fund_instrument_id, as_of, provider)` 查找本地快照；缺失或超过时效阈值时调用 Provider，未过期时直接复用。新增、换入或卖出 ETF 均由持仓事实驱动，不要求修改分类代码。
+
+统一 Provider 输出至少包含基金标识、`as_of`、抓取时间、来源、原始响应哈希、成分标识、权重、可选持股数和基金内市值。原始响应不可变留存，标准化快照追加写入，不覆盖历史；历史组合计算必须选择当时可得的快照，避免前视偏差。
+
+Provider 优先级：
+
+1. 发行人官方 CSV / 文件适配器，原始文件放入私有目录后自动解析；
+2. 所有者提供的统一 CSV 格式；
+3. 覆盖当前持仓、支持明确 `as_of` 的结构化 ETF Holdings API（可选付费 Provider）；
+4. SEC N-PORT 用作免费低频兜底；按 CIK 与 Series ID 双重识别基金，并遵守 SEC User-Agent 与限速要求。
+
+主 Provider 失败时保留最后可信快照并标记 `stale`；从未成功取得的基金进入“待穿透”，不得把基金管理人当作经济发行人。某一发行人端点受阻只降低该适配器优先级，不构成领域层阻塞。
+
 ## 7. 核心领域模型
 
 ### 7.1 事实与组合
@@ -213,6 +229,8 @@ PriceObservation
 FxObservation
 OptionObservation
 Benchmark
+FundHoldingsSnapshot
+FundHolding
 Exposure
 ```
 
@@ -276,6 +294,7 @@ AgentRun
 
 - `Instrument → Issuer`：多种证券可以属于同一发行人；
 - `PositionSnapshot → Instrument`：保存 point-in-time 持仓；
+- `FundHoldingsSnapshot → FundHolding → Instrument/Issuer`：按 `as_of` 保存 ETF 成分事实并支持历史重放；
 - `StrategyVersion → ParameterSet → CalculationRun`：每次计算明确使用的规则与参数；
 - `Evidence → Claim → FactorAssessment/ThemeVersion`：证据通过可验证命题支撑研究判断；
 - `FactorAssessment → WeightTier`：权重档位引用因子结论与"为什么是这一层"的理由；

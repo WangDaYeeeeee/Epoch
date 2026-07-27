@@ -6,6 +6,7 @@ import { assertCurrency, assertIsoDate, EPOCH_CONVENTIONS } from "../domain/conv
 import { auditDailyMarketBars, CASH_EQUIVALENT_INSTRUMENTS, currentPositionMarketDataRequirement, evaluateMarketDataFreshness, isDerivativeInstrumentId, marketDataRequirement, type MarketBarCoverage, type MarketDataFreshness, type MarketDataRequirement } from "../domain/market-data";
 import { ledgerReplayReadiness, reconcileCashEndpoints, replayLedgerDaily, type CashEndpointReconciliation, type LedgerReplayReadiness } from "../domain/ledger-replay";
 import { valueDailyLedger } from "../domain/ledger-valuation";
+import { attributePortfolioReturns, type ReturnAttribution } from "../domain/return-attribution";
 import { parseCsv } from "./csv";
 
 export const BASELINE_FILES = ["transactions.csv", "positions.csv", "performance.csv"] as const;
@@ -66,6 +67,7 @@ export type BaselineDataset = {
   cashEndpointReconciliation: CashEndpointReconciliation;
   dailyLedgerReplay: DailyLedgerReplaySummary;
   dailyLedgerValuation: DailyLedgerValuationSummary;
+  returnAttribution: ReturnAttribution;
   healthy: boolean;
   ledgerReconciled: boolean;
 };
@@ -121,14 +123,18 @@ export function loadMarketDataFreshness(
   const manifestPath = resolve(root, "raw/market-data/manifest.json");
   const prices = existsSync(pricePath) ? parseCsv(readFileSync(pricePath, "utf8")) : [];
   const requiredIds = [...requirement.canonicalInstrumentIds, ...requirement.fxPairs.map((pair) => `FX:${pair}`)];
-  const latestById = new Map<string, string>();
+  const datesById = new Map<string, Set<string>>();
   for (const row of prices) {
     if (!requiredIds.includes(row.instrument_id)) continue;
-    if (!latestById.has(row.instrument_id) || row.date > latestById.get(row.instrument_id)!) latestById.set(row.instrument_id, row.date);
+    const dates = datesById.get(row.instrument_id) ?? new Set<string>();
+    dates.add(row.date);
+    datesById.set(row.instrument_id, dates);
   }
-  const latestEffectiveDate = requiredIds.length > 0 && requiredIds.every((instrumentId) => latestById.has(instrumentId))
-    ? requiredIds.map((instrumentId) => latestById.get(instrumentId)!).sort()[0]
-    : null;
+  const firstDates = requiredIds[0] ? datesById.get(requiredIds[0]) : null;
+  const commonDates = firstDates
+    ? [...firstDates].filter((date) => requiredIds.every((instrumentId) => datesById.get(instrumentId)?.has(date)))
+    : [];
+  const latestEffectiveDate = commonDates.sort().at(-1) ?? null;
   const expectedThroughDate = previousTradingDay(asOfDate, NDX_CALENDAR);
 
   let observedAt: string | null = null;
@@ -398,6 +404,16 @@ export function loadBaselineDataset(root: string): BaselineDataset {
   const cashEndpointReconciliation = reconcileCashEndpoints(rows["transactions.csv"], rows["positions.csv"]);
   const dailyReplay = replayLedgerDaily(rows["transactions.csv"], splits, rows["performance.csv"].map((row) => row.date));
   const dailyValuation = valueDailyLedger(dailyReplay.states, prices, rows["transactions.csv"], rows["performance.csv"]);
+  const returnAttribution = attributePortfolioReturns({
+    states: dailyReplay.states,
+    prices,
+    transactions: rows["transactions.csv"],
+    performance: rows["performance.csv"],
+    splits,
+    residualReasonsByDate: Object.fromEntries(
+      dailyValuation.points.map((point) => [point.date, point.missingInstrumentIds]),
+    ),
+  });
   const terminalState = dailyReplay.states.at(-1);
   const dailyLedgerReplay: DailyLedgerReplaySummary = {
     days: dailyReplay.days, transactionEventsApplied: dailyReplay.transactionEventsApplied,
@@ -418,7 +434,7 @@ export function loadBaselineDataset(root: string): BaselineDataset {
     terminalDifferenceUsd: dailyValuation.terminalDifferenceUsd,
     missingInstrumentIds: dailyValuation.missingInstrumentIds,
   };
-  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, valuationCoverage, marketDataRequirement: marketRequirement, marketDataCoverage: marketCoverage, marketDataFreshness: marketFreshness, marketBarCoverage, ledgerReplayReadiness: replayReadiness, cashEndpointReconciliation, dailyLedgerReplay, dailyLedgerValuation, healthy: false, ledgerReconciled: false };
+  const dataset: BaselineDataset = { root, manifest, rows, hashes, checks, positionReconciliation, valuationCoverage, marketDataRequirement: marketRequirement, marketDataCoverage: marketCoverage, marketDataFreshness: marketFreshness, marketBarCoverage, ledgerReplayReadiness: replayReadiness, cashEndpointReconciliation, dailyLedgerReplay, dailyLedgerValuation, returnAttribution, healthy: false, ledgerReconciled: false };
   validateKeys(rows, checks);
   validateScope(dataset);
   validatePerformanceChain(dataset);

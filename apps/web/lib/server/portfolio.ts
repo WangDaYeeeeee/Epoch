@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Sql } from "postgres";
-import type { PortfolioPayload } from "@/lib/types";
+import type { PortfolioPayload, PortfolioRiskSnapshot } from "@/lib/types";
 import { checkIbkrReadOnlyConnection } from "../connectors/ibkr-web";
-import { buildExposureSnapshot } from "../domain/exposure";
+import { buildExposureSnapshot, type InstrumentClassification } from "../domain/exposure";
+import { calculateRiskDrift } from "../domain/risk-drift";
+import { discoverHeldFunds, holdingsClassifications, selectFundHoldingsSnapshot } from "../domain/fund-holdings";
 import { INSTRUMENT_CLASSIFICATION_VERSION, instrumentClassifications } from "../domain/instrument-classifications";
 import { calculateMoneyWeightedReturn, performanceCashFlows } from "../domain/performance";
 import { marketDataRequirement } from "../domain/market-data";
@@ -11,11 +13,51 @@ import { loadBaselineDataset, reconcileEventCoverage, reconcilePerformanceReturn
 import { parseCsv } from "./csv";
 import { createDatabaseClient } from "./database";
 import { calculateDemoLedger } from "./demo-ledger";
+import { PostgresFundHoldingsRepository } from "./fund-holdings-sync";
+import { PostgresCalculationRunRepository, type CalculationRunRecord } from "./calculation-run";
+import { PostgresRiskDriftAnchorRepository } from "./risk-drift-anchor";
 
 type Row = Record<string, string>;
 type PrivatePortfolioRows = { performance: Row[]; transactions: Row[]; positions: Row[] };
 const readRows = (path: string) => parseCsv(readFileSync(path, "utf8"));
 const actionNames: Record<string, string> = { buy: "买入", sell: "卖出", deposit: "入金", withdrawal: "出金", transfer_in: "转入", transfer_out: "转出", adjustment_in: "资产调增", adjustment_out: "资产调减" };
+
+function riskSnapshot(record: CalculationRunRecord, dataStatus: "fresh" | "stale"): PortfolioPayload["risk"] {
+  if (!record.response || !["succeeded", "degraded"].includes(record.response.status)) return undefined;
+  const output = record.response.output as {
+    portfolio?: PortfolioRiskSnapshot["portfolio"];
+    instruments?: PortfolioRiskSnapshot["instruments"];
+    policyGate?: PortfolioRiskSnapshot["policyGate"];
+  };
+  if (
+    !output.portfolio || !Array.isArray(output.instruments) || !output.policyGate
+    || !Number.isFinite(output.portfolio.volatilityAnnualized)
+    || !Number.isFinite(output.portfolio.stressVolatilityAnnualized)
+    || !Number.isFinite(output.policyGate.limitAnnualized)
+  ) return undefined;
+  const diagnostics = record.response.diagnostics as Partial<NonNullable<PortfolioRiskSnapshot["modelDiagnostics"]>>;
+  const modelDiagnostics = (
+    typeof diagnostics.semivarianceResolution === "string"
+    && typeof diagnostics.ivInputStatus === "string"
+    && Array.isArray(diagnostics.forecasts)
+    && Array.isArray(diagnostics.historicalCrashWeeks)
+    && Array.isArray(diagnostics.correlationClusters)
+    && diagnostics.divergence
+  ) ? diagnostics as PortfolioRiskSnapshot["modelDiagnostics"] : undefined;
+  return {
+    calculationId: record.id,
+    asOf: record.asOf,
+    inputHash: record.inputHash,
+    status: record.response.status as "succeeded" | "degraded",
+    modelVersion: record.response.modelVersion,
+    dataStatus,
+    portfolio: output.portfolio,
+    instruments: output.instruments,
+    policyGate: output.policyGate,
+    ...(modelDiagnostics ? { modelDiagnostics } : {}),
+    warnings: record.response.warnings,
+  };
+}
 
 export function resolveDataRoot(): string | null {
   if (process.env.EPOCH_DATA_ROOT && existsSync(resolve(process.env.EPOCH_DATA_ROOT, "validation.json"))) return process.env.EPOCH_DATA_ROOT;
@@ -50,6 +92,7 @@ export function loadPortfolio(root = resolveDataRoot()): PortfolioPayload {
     cashEndpointReconciliation: baseline.cashEndpointReconciliation,
     dailyLedgerReplay: baseline.dailyLedgerReplay,
     dailyLedgerValuation: baseline.dailyLedgerValuation,
+    returnAttribution: baseline.returnAttribution,
   });
 }
 
@@ -71,7 +114,8 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
   cashEndpointReconciliation?: PortfolioPayload["health"]["cashEndpointReconciliation"];
   dailyLedgerReplay?: PortfolioPayload["health"]["dailyLedgerReplay"];
   dailyLedgerValuation?: PortfolioPayload["health"]["dailyLedgerValuation"];
-}): PortfolioPayload {
+  returnAttribution?: PortfolioPayload["returnAttribution"];
+}, additionalClassifications: InstrumentClassification[] = []): PortfolioPayload {
   let benchmark = 100, portfolioPeak = 0, benchmarkPeak = 0;
   const series = performance.map((row, index) => {
     const portfolio = Number(row.nav);
@@ -128,13 +172,14 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
     marketValueUsd: position.marketValue,
     currency: position.currency,
     assetClass: position.assetClass,
-  })), instrumentClassifications);
+  })), [...instrumentClassifications, ...additionalClassifications]);
   return {
     meta: { account: "FUTU-2189 + IBKR-8602", asOf: latest.date, baseCurrency: "USD", benchmark: ".NDX", strategyVersion: "epoch-satellite-v0.1.0", classificationVersion: INSTRUMENT_CLASSIFICATION_VERSION },
     summary: { nav: latest.nav, cash: currentRows.filter((row) => row.category === "cash").reduce((sum, row) => sum + valueInUsd(row), 0), portfolioReturn, benchmarkReturn, activeReturn: portfolioReturn - benchmarkReturn, maxDrawdown: Math.min(...series.map((point) => point.drawdown)), moneyWeightedReturn: moneyWeightedReturn?.annualized, cumulativeMoneyWeightedReturn: moneyWeightedReturn?.cumulative },
     series, events,
     positions: currentPositions,
     exposure,
+    returnAttribution: health.returnAttribution,
     health: {
       status: health.healthy && health.marketDataFreshness?.status !== "stale" && health.marketDataFreshness?.status !== "missing" ? "healthy" : "warning",
       ledgerBalanced: health.ledgerBalanced ?? false,
@@ -158,7 +203,7 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
 }
 
 export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayload | null> {
-  return sql.begin(async (transaction) => {
+  const payload = await sql.begin(async (transaction) => {
     const performance = await transaction<Row[]>`
       SELECT snapshot_date::text AS date, portfolio_id, total_assets::text, COALESCE(cash::text, '') AS cash,
              net_external_flow::text, currency, nav::text, COALESCE(period_return::text, '') AS period_return,
@@ -207,6 +252,22 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     const requirement = marketDataRequirement(transactions, performance);
     const dataRoot = resolveDataRoot();
     const stagedBaseline = dataRoot ? loadBaselineDataset(dataRoot) : null;
+    const latestPositionDate = positions.map((row) => row.date).sort().at(-1) ?? "";
+    const currentPositionRows = positions.filter((row) => row.date === latestPositionDate);
+    const heldFunds = discoverHeldFunds(currentPositionRows.map((row) => ({
+      instrumentId: row.instrument_id,
+      assetClass: row.category,
+      quantity: Number(row.quantity),
+    })));
+    const fundSnapshots = await new PostgresFundHoldingsRepository(sql).load(heldFunds);
+    const fundSelections = new Map(heldFunds.map((fundInstrumentId) => [
+      fundInstrumentId,
+      selectFundHoldingsSnapshot(
+        fundSnapshots.filter((snapshot) => snapshot.fundInstrumentId === fundInstrumentId),
+        latestPositionDate,
+        Number(process.env.ETF_HOLDINGS_MAX_AGE_DAYS ?? 90),
+      ),
+    ]));
     return buildPrivatePortfolio({ performance, transactions, positions }, {
       source: "database-baseline",
       healthy: true,
@@ -225,8 +286,71 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
       cashEndpointReconciliation: stagedBaseline?.cashEndpointReconciliation,
       dailyLedgerReplay: stagedBaseline?.dailyLedgerReplay,
       dailyLedgerValuation: stagedBaseline?.dailyLedgerValuation,
-    });
+      returnAttribution: stagedBaseline?.returnAttribution,
+    }, holdingsClassifications(fundSelections, instrumentClassifications));
   });
+  if (!payload) return null;
+  const alertRows = await sql<{
+    id: string;
+    source: string;
+    severity: "warning" | "error";
+    title: string;
+    detail: string;
+    occurrence_count: number;
+    last_observed_at: string;
+  }[]>`
+    SELECT id::text, source, severity, title, detail, occurrence_count,
+           last_observed_at::text
+    FROM operational_alert
+    WHERE status = 'open'
+    ORDER BY severity DESC, last_observed_at DESC
+    LIMIT 20
+  `;
+  const operationalAlerts = alertRows.map((row) => ({
+    id: row.id,
+    source: row.source,
+    severity: row.severity,
+    title: row.title,
+    detail: row.detail,
+    occurrenceCount: row.occurrence_count,
+    lastObservedAt: new Date(row.last_observed_at).toISOString(),
+  }));
+  const riskRepository = new PostgresCalculationRunRepository(sql);
+  const [riskRuns, scenarioRuns, driftAnchor] = await Promise.all([
+    riskRepository.loadCompletedHistory("portfolio-risk", 30),
+    riskRepository.loadCompletedHistory("portfolio-risk-rebalance", 5),
+    new PostgresRiskDriftAnchorRepository(sql).loadLatest(),
+  ]);
+  const dataStatus = payload.health.marketDataFreshness?.status === "fresh" ? "fresh" : "stale";
+  const riskHistory = riskRuns
+    .map((record) => riskSnapshot(record, dataStatus))
+    .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot != null)
+    .reverse();
+  const latestRisk = riskRuns[0];
+  const latestRiskSnapshot = latestRisk
+    ? riskSnapshot(latestRisk, dataStatus)
+    : undefined;
+  const riskScenarios = scenarioRuns
+    .map((record) => riskSnapshot(record, dataStatus))
+    .filter((scenario): scenario is NonNullable<typeof scenario> => scenario != null);
+  const riskDrift = latestRiskSnapshot && driftAnchor
+    ? calculateRiskDrift({
+      currentPortfolioVolatilityAnnualized: latestRiskSnapshot.portfolio.volatilityAnnualized,
+      currentInstruments: latestRiskSnapshot.instruments,
+      anchor: driftAnchor,
+    })
+    : undefined;
+  return {
+    ...payload,
+    health: {
+      ...payload.health,
+      ...(operationalAlerts.length ? { operationalAlerts } : {}),
+    },
+    ...(latestRiskSnapshot ? { risk: latestRiskSnapshot } : {}),
+    ...(riskHistory.length ? { riskHistory } : {}),
+    ...(riskScenarios.length ? { riskScenarios } : {}),
+    ...(riskDrift ? { riskDrift } : {}),
+  };
 }
 
 export async function loadPortfolioPreferDatabase(): Promise<PortfolioPayload> {

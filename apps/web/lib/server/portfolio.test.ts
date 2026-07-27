@@ -25,16 +25,16 @@ describe("staged satellite portfolio", () => {
     expect(payload.health.marketDataRequirement?.canonicalInstrumentIds).toHaveLength(28);
     expect(payload.health.marketDataCoverage).toMatchObject({
       requiredSecurities: 28, coveredSecurities: 28, requiredFxPairs: 2, coveredFxPairs: 2,
-      priceObservations: 11148, splitEvents: 6,
+      priceObservations: 11180, splitEvents: 6,
       missingInstrumentIds: [],
     });
     expect(payload.health.marketDataFreshness).toMatchObject({
-      status: "stale",
-      latestEffectiveDate: "2026-07-16",
-      observationTimestampQuality: "filesystem_fallback",
+      status: "fresh",
+      latestEffectiveDate: "2026-07-23",
+      observationTimestampQuality: "authoritative",
     });
-    expect(payload.health.marketDataFreshness?.tradingDayLag).toBeGreaterThan(1);
-    expect(payload.health.status).toBe("warning");
+    expect(payload.health.marketDataFreshness?.tradingDayLag).toBe(1);
+    expect(payload.health.status).toBe("healthy");
     expect(payload.health.marketBarCoverage).toMatchObject({
       requiredInstruments: 5,
       coveredInstruments: 5,
@@ -64,7 +64,7 @@ describe("staged satellite portfolio", () => {
     expect(payload.positions.map((position) => position.marketValue)).toEqual(
       [...payload.positions].map((position) => position.marketValue).sort((left, right) => right - left),
     );
-    expect(payload.meta.classificationVersion).toBe("phase2-bootstrap-v1");
+    expect(payload.meta.classificationVersion).toBe("phase2-bootstrap-v2");
     expect(payload.exposure.totalGrossValueUsd).toBeCloseTo(60611.71068, 8);
     expect(payload.exposure.issuerCoverage.classifiedValueUsd).toBeCloseTo(44957.41068, 8);
     expect(payload.exposure.issuerCoverage.ratio).toBeCloseTo(0.741728128, 8);

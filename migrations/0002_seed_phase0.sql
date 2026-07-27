@@ -12,8 +12,8 @@ VALUES (
   'epoch-satellite-v0.1.0',
   '0.1.0',
   'draft',
-  '{"calibration_required":true,"portfolio_volatility_limit":0.45,"correlation_window_trading_days":250,"stress_correlation":0.9,"volatility_drift_highlight_multiplier":1.5,"volatility_drift_strong_multiplier":2,"risk_capital_ratio_highlight_multiplier":1.5,"position_weight_min":0.1,"position_weight_max":0.4,"weight_tier_ladder":[0.4,0.35,0.3,0.25,0.2,0.15,0.1],"near_event_trading_days":10,"refill_batch_ratio":[1,1,1],"refill_batch2_clear_trading_days":5,"refill_deadline_trading_days":10,"exit_repurchase_restriction_days":90,"calm_period_trading_days":20}'::jsonb,
-  '3ea6f3ccc5b52daf717facfcf0213626e7cd3c7484a66de0f7afd50fe151c8b5'
+  '{"theta":0.5,"portfolio_volatility_limit":0.45,"stress_week_loss_limit":-0.12,"drawdown_risk_only_threshold":-0.25,"near_event_trading_days":10,"rc_warning_multiplier":1.2,"rc_trigger_multiplier":1.3,"calibration_required":true}'::jsonb,
+  'caab0d337d5ff9380ce871cc5786a2572916955a882d67b1d42a006602444a3a'
 )
 ON CONFLICT (id) DO UPDATE SET
   version = EXCLUDED.version,

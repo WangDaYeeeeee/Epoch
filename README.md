@@ -64,6 +64,49 @@ pnpm import:flex -- --file /path/to/activity-statement.csv
 
 这条命令只用于未来追加新的 IBKR 数据，不用于重做现有历史基线。原始报表按 SHA-256 不可变保存到 `data/raw/ibkr-flex/`（不纳入 Git），交易和现金流水按 IBKR 外部标识幂等写入账本。默认账户为 `ibkr_8602`，可通过 `--account` 修改。
 
+同步当前持有 ETF 的底层成分：
+
+```bash
+pnpm fund-holdings:sync
+```
+
+运行一次可重放的真实组合风险计算（需要 PostgreSQL 与本机 Analytics Service）：
+
+```bash
+pnpm risk:run
+```
+
+命令会从最新私有持仓与 `market-bars.csv` 构造版本化输入，以相关风险源文件的内容哈希作为工作区代码版本，调用 `portfolio-risk`，并把不可变输入、模型输出、诊断、警告及耗时幂等写入 `calculation_run`。
+
+Scheduler 每 6 小时检查一次真实组合风险输入。输入日期、输入哈希和风险代码版本均未变化时安全跳过，不重复调用 Analytics；任一项变化时才创建新的不可变风险运行。任务失败会写入可累计的开放告警，恢复后自动标记 resolved，开放告警会显示在页面“数据健康”区域。
+
+标准化行情另有每小时新鲜度监控。它只读取本地数据，不自动向外部 Provider 发送标的列表；共同有效日期缺失或落后预期截止日超过 1 个交易日时产生 warning，刷新恢复后自动关闭。
+
+默认免费模式从 `data/raw/etf-holdings/` 读取基金公司 CSV。支持直接放入 iShares 下载文件（文件名如 `SOXX_holdings.csv`），也支持统一格式：
+
+```csv
+fund_instrument_id,as_of,constituent_instrument_id,name,weight,shares,market_value
+US:SOXX,2026-07-17,US:NVDA,NVIDIA Corporation,0.085,,
+```
+
+命令从数据库最新非零持仓自动识别 ETF，只在快照缺失或超过 `ETF_HOLDINGS_MAX_AGE_DAYS`（默认 90 天）时请求 Provider。成功结果按日期和来源哈希追加保存；原始 CSV 留在 Git 忽略的私有目录中。请求失败时保留最后可信快照，页面穿透不会把基金管理人误记为经济发行人。
+
+FMP 保留为可选付费 Provider：
+
+```bash
+ETF_HOLDINGS_PROVIDER=fmp FMP_API_KEY=... pnpm fund-holdings:sync
+```
+
+SEC N-PORT 可作为免费但低频、滞后的自动兜底：
+
+```bash
+ETF_HOLDINGS_PROVIDER=local_csv,sec_nport \
+SEC_USER_AGENT="Epoch your-email@example.com" \
+pnpm fund-holdings:sync
+```
+
+系统先查本地官方文件，缺失时才访问 SEC；SEC 文件会按 Series ID 再校验基金身份。当前已登记 SOXX（CIK `1100663`、Series `S000004354`）。SEC 要求自动访问使用可识别的 User-Agent，且 N-PORT 具有申报延迟，因此它不替代调仓时的最新官方文件。
+
 已有的 `tmp/satellite-data/normalized/*.csv` 会在 `pnpm dev:local` 和 Docker Compose 启动时自动校验并幂等登记到 PostgreSQL，无需手工重新导入。也可以单独执行只读检查：
 
 ```bash
@@ -90,6 +133,12 @@ pnpm baseline:check
 
 运行 `pnpm market:fetch` 会把公开日频行情原始响应写入私有暂存区，并生成 `market-prices.csv`、`market-bars.csv` 与 `market-splits.csv`；原始响应保留内容哈希，下载数据不会提交到仓库。
 
+页面“数据健康”区域也提供人工刷新入口。入口先展示精确的 Provider、来源 symbol、日期范围与预检指纹；只有勾选外发授权并再次确认后才执行。服务端重新校验指纹并持有 advisory lock，避免预检变化或并发刷新。目标集合由当前非零持仓及必要 FX 对自动推导；默认从共同最新有效日前 7 个自然日开始回补，只合并该窗口内的目标记录并保留其他历史。
+
+每次确认后的刷新都有独立 `market_refresh_run` 审计记录，保存不可变预检、运行状态、结果或失败原因。页面显示最近一次运行状态。标准化 CSV 会先完整写入同目录临时文件，再以完整文件替换，避免网络或进程中断留下截断内容。
+
+下载结果在合并前必须通过验收：每个预检目标都有价格、股票目标都有合法 OHLC、日期位于确认区间内，且不存在重复的日期/标的键。FX 只要求正数 OHLC 与 close 覆盖，不把供应商可能不一致的盘中 high/low 当成硬失败。验收摘要写入 run manifest 和刷新结果。
+
 已有原始行情时可以运行 `pnpm market:normalize`，完全离线重新生成兼容的 `market-prices.csv`、`market-bars.csv` 和 `market-splits.csv`。OHLCV 行同时携带来源观测时间；联网刷新仍需显式允许将所需标的列表发送给对应公开数据源。
 
 主要端点：
@@ -97,6 +146,8 @@ pnpm baseline:check
 - `GET /api/health`：数据库、Analytics、迁移、数据来源与交易权限状态；
 - `GET /api/v1/portfolio`：当前组合；
 - `GET /api/v1/calculations/demo`：从固定交易、现金流和价格重建的每日账本。
+- `POST /api/v1/risk/rebalance`：保存并计算显式调仓意向，不下单；
+- `GET/POST /api/v1/risk/anchors`：读取或明确确认波动率漂移锚点。
 
 Phase 0 与 Phase 1 的范围及验收证据分别见 [docs/reviews/PHASE_0.md](docs/reviews/PHASE_0.md) 和 [docs/reviews/PHASE_1.md](docs/reviews/PHASE_1.md)；Phase 2 的实施进度见 [docs/reviews/PHASE_2.md](docs/reviews/PHASE_2.md)。数据约定见 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)。
 

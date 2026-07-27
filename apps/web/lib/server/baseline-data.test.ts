@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadBaselineDataset, reconcileEventCoverage, reconcilePositionQuantities, reconcileReportedValuations } from "./baseline-data";
+import { loadBaselineDataset, loadMarketDataFreshness, reconcileEventCoverage, reconcilePositionQuantities, reconcileReportedValuations } from "./baseline-data";
 
 const temporaryRoots: string[] = [];
 
@@ -47,6 +47,12 @@ describe("normalized satellite baseline", () => {
     expect(dataset.checks).toContainEqual(expect.objectContaining({ name: "performance:asset-return-reconciliation", status: "passed" }));
     expect(dataset.checks).toContainEqual(expect.objectContaining({ name: "ledger:position-quantity-reconciliation", status: "passed" }));
     expect(dataset.checks.some((check) => check.name === "performance:nav-chain" && check.status === "passed")).toBe(true);
+    expect(dataset.returnAttribution.residuals.reduce((sum, item) => sum + item.pnlUsd, 0))
+      .toBeCloseTo(dataset.returnAttribution.residualPnlUsd, 8);
+    expect(dataset.returnAttribution.residuals).toContainEqual(expect.objectContaining({
+      reason: "UNEXPLAINED_MODEL_RESIDUAL",
+      days: 1,
+    }));
   });
 
   it("rejects a non-boolean external-flow classification", () => {
@@ -77,5 +83,32 @@ describe("normalized satellite baseline", () => {
       { market_value: "100", base_currency: "CNY", fx_to_base: "7.2", market_value_base: "720" },
       { market_value: "50", base_currency: "", fx_to_base: "", market_value_base: "" },
     ])).toMatchObject({ total: 2, withFx: 1, fxReconciled: 1, missingFx: 1, maxBaseValueError: 0 });
+  });
+
+  it("uses the latest actual date intersection rather than the minimum of per-series maxima", () => {
+    const root = mkdtempSync(join(tmpdir(), "epoch-market-freshness-"));
+    temporaryRoots.push(root);
+    mkdirSync(join(root, "normalized"), { recursive: true });
+    mkdirSync(join(root, "raw", "market-data"), { recursive: true });
+    writeFileSync(join(root, "normalized", "market-prices.csv"), `date,instrument_id,close,currency,source,source_symbol,observed_at
+2026-07-23,US:GOOGL,200,USD,fixture,GOOGL,2026-07-27T00:00:00Z
+2026-07-24,US:GOOGL,201,USD,fixture,GOOGL,2026-07-27T00:00:00Z
+2026-07-23,FX:KRWUSD,0.00072,USD,fixture,KRWUSD=X,2026-07-27T00:00:00Z
+2026-07-27,FX:KRWUSD,0.00073,USD,fixture,KRWUSD=X,2026-07-27T00:00:00Z
+`);
+    writeFileSync(join(root, "raw", "market-data", "manifest.json"), JSON.stringify({ observed_at: "2026-07-27T00:00:00Z" }));
+    expect(loadMarketDataFreshness(root, {
+      dateFrom: "2026-07-17",
+      dateTo: "2026-07-17",
+      rawInstrumentIds: 1,
+      canonicalInstrumentIds: ["US:GOOGL"],
+      aliasesCollapsed: 0,
+      fxPairs: ["KRWUSD"],
+    }, "2026-07-27")).toMatchObject({
+      status: "fresh",
+      latestEffectiveDate: "2026-07-23",
+      expectedThroughDate: "2026-07-24",
+      tradingDayLag: 1,
+    });
   });
 });

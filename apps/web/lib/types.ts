@@ -1,4 +1,50 @@
 import type { ExposureSnapshot } from "./domain/exposure";
+import type { ReturnAttribution } from "./domain/return-attribution";
+import type { RiskDriftSnapshot } from "./domain/risk-drift";
+
+export type PortfolioRiskSnapshot = {
+  calculationId: string;
+  asOf: string;
+  inputHash: string;
+  status: "succeeded" | "degraded";
+  modelVersion: string;
+  dataStatus: "fresh" | "stale";
+  portfolio: {
+    volatilityAnnualized: number;
+    stressVolatilityAnnualized: number;
+    historicalCvarLoss: number | null;
+    cvarConfidence: number;
+  };
+  instruments: {
+    instrumentId: string;
+    weight: number;
+    volatilityAnnualized: number;
+    riskContribution: number;
+    riskCapitalRatio: number | null;
+  }[];
+  policyGate: {
+    limitAnnualized: number;
+    observedAnnualized: number;
+    passed: boolean;
+    violations: string[];
+  };
+  modelDiagnostics?: {
+    semivarianceResolution: string;
+    ivInputStatus: string;
+    forecasts: {
+      instrumentId: string;
+      positiveSemivariance22d: number;
+      negativeSemivariance22d: number;
+      signedJump22d: number;
+      expandingWindowBacktest: { observations: number; mae: number; rmse: number };
+      harBaselineExpandingWindowBacktest: { observations: number; mae: number; rmse: number };
+    }[];
+    historicalCrashWeeks: { endDate: string; return: number }[];
+    correlationClusters: string[][];
+    divergence: { status: string; reason: string };
+  };
+  warnings: string[];
+};
 
 export type PortfolioPayload = {
   meta: { account: string; asOf: string; baseCurrency: string; benchmark: string; strategyVersion: string; classificationVersion: string };
@@ -7,12 +53,26 @@ export type PortfolioPayload = {
   events?: { date: string; type: string; label: string; details?: string[] }[];
   positions: { instrumentId: string; symbol: string; name?: string; quantity: number; marketValue: number; currency: string; assetClass: string }[];
   exposure: ExposureSnapshot;
+  returnAttribution?: ReturnAttribution;
+  risk?: PortfolioRiskSnapshot;
+  riskHistory?: PortfolioRiskSnapshot[];
+  riskScenarios?: PortfolioRiskSnapshot[];
+  riskDrift?: RiskDriftSnapshot;
   health: {
     status: string;
     ledgerBalanced: boolean;
     reconciliationDifference: number;
     source: string;
     message: string;
+    operationalAlerts?: {
+      id: string;
+      source: string;
+      severity: "warning" | "error";
+      title: string;
+      detail: string;
+      occurrenceCount: number;
+      lastObservedAt: string;
+    }[];
     assetReturnsReconciled?: boolean;
     eventCoverage?: { total: number; classified: number; trades: number; cashEvents: number; dividends: number; taxes: number; fxLegs: number; transfers: number; adjustments: number };
     valuationCoverage?: { total: number; withFx: number; fxReconciled: number; missingFx: number; maxBaseValueError: number };

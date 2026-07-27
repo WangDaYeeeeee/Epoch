@@ -11,8 +11,10 @@
     "db:migrate": "node --import tsx scripts/migrate.ts",
     "baseline:check": "node --import tsx scripts/baseline.ts check",
     "baseline:import": "node --import tsx scripts/baseline.ts import",
-    "market:fetch": "node --import tsx scripts/fetch-market-data.ts",
+    "market:fetch": "node --import tsx scripts/run-market-refresh.ts",
     "market:normalize": "node --import tsx scripts/normalize-market-data.ts",
+    "fund-holdings:sync": "node --import tsx scripts/sync-fund-holdings.ts",
+    "risk:run": "node --import tsx scripts/run-portfolio-risk.ts",
     "import:flex": "node --import tsx scripts/import-flex.ts",
     "scheduler": "node --import tsx scripts/scheduler.ts",
     "scheduler:once": "node --import tsx scripts/scheduler.ts --once"

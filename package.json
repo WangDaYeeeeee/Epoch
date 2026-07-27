@@ -19,6 +19,8 @@
     "baseline:import": "pnpm --filter @epoch/web baseline:import",
     "market:fetch": "pnpm --filter @epoch/web market:fetch",
     "market:normalize": "pnpm --filter @epoch/web market:normalize",
+    "fund-holdings:sync": "pnpm --filter @epoch/web fund-holdings:sync",
+    "risk:run": "pnpm --filter @epoch/web risk:run",
     "import:flex": "pnpm --filter @epoch/web import:flex",
     "scheduler": "pnpm --filter @epoch/web scheduler",
     "scheduler:once": "pnpm --filter @epoch/web scheduler:once"

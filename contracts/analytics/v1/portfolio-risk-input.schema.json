@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://epoch.local/contracts/analytics/v1/portfolio-risk-input.schema.json",
+  "title": "Epoch portfolio risk input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "asOf", "baseCurrency", "weightDefinition", "marketDataDefinition", "positions", "series"],
+  "properties": {
+    "schemaVersion": { "const": "portfolio-risk-input/1.0" },
+    "asOf": { "type": "string", "format": "date-time" },
+    "baseCurrency": { "const": "USD" },
+    "weightDefinition": { "const": "market_value_usd_over_net_nav_cash_in_denominator" },
+    "marketDataDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["priceAdjustment", "ohlcCurrency", "returnMethod", "dividendTreatment"],
+      "properties": {
+        "priceAdjustment": { "const": "split_adjusted" },
+        "ohlcCurrency": { "const": "usd_using_same_date_fx_close" },
+        "returnMethod": { "const": "common_date_close_to_close_usd" },
+        "dividendTreatment": { "const": "excluded" }
+      }
+    },
+    "positions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instrumentId", "weight"],
+        "properties": {
+          "instrumentId": { "type": "string", "pattern": "^[^:]+:.+$" },
+          "weight": { "type": "number" }
+        }
+      }
+    },
+    "series": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instrumentId", "bars", "returnsUsd"],
+        "properties": {
+          "instrumentId": { "type": "string", "pattern": "^[^:]+:.+$" },
+          "bars": {
+            "type": "array",
+            "minItems": 60,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["date", "open", "high", "low", "close"],
+              "properties": {
+                "date": { "type": "string", "format": "date" },
+                "open": { "type": "number", "exclusiveMinimum": 0 },
+                "high": { "type": "number", "exclusiveMinimum": 0 },
+                "low": { "type": "number", "exclusiveMinimum": 0 },
+                "close": { "type": "number", "exclusiveMinimum": 0 }
+              }
+            }
+          },
+          "returnsUsd": {
+            "type": "array",
+            "minItems": 250,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["date", "value"],
+              "properties": {
+                "date": { "type": "string", "format": "date" },
+                "value": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

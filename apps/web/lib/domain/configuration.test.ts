@@ -19,10 +19,11 @@ describe("versioned owner configuration", () => {
     const policyContent = read("frameworks/policies/default-draft-v0.1.0.json");
     const strategyContent = read("frameworks/strategies/epoch-satellite-v0.1.0.json");
     const policy = JSON.parse(policyContent);
-    const migration = read("migrations/0002_seed_phase0.sql");
+    const initialMigration = read("migrations/0002_seed_phase0.sql");
+    const policyMigration = read("migrations/0008_update_strategy_v05_parameters.sql");
     expect(policy.status).toBe("draft");
     expect(policy.calibration_required).toBe(true);
-    expect(migration).toContain(createHash("sha256").update(policyContent).digest("hex"));
-    expect(migration).toContain(createHash("sha256").update(strategyContent).digest("hex"));
+    expect(policyMigration).toContain(createHash("sha256").update(policyContent).digest("hex"));
+    expect(initialMigration).toContain(createHash("sha256").update(strategyContent).digest("hex"));
   });
 });
