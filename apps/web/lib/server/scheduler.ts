@@ -3,6 +3,7 @@ import type { Sql } from "postgres";
 import { calculateDemoLedger } from "./demo-ledger";
 import { runMarketDataFreshnessMonitor } from "./market-data-monitor";
 import { runPortfolioRiskIfChanged } from "./portfolio-risk-runner";
+import { PostgresQualityMetricsRepository } from "./quality-metrics";
 
 type ScheduledJob = { id: string; handler: string; interval_seconds: number };
 type JobStatus = "succeeded" | "failed" | "skipped";
@@ -29,6 +30,9 @@ const handlers: Record<string, (sql: Sql) => Promise<"succeeded" | "skipped" | v
   "demo-ledger-recalculation": runDemoLedgerCalculation,
   "market-data-freshness-monitor": runMarketDataFreshnessMonitor,
   "portfolio-risk-refresh": runPortfolioRiskIfChanged,
+  "quality-metrics-refresh": async (sql) => {
+    await new PostgresQualityMetricsRepository(sql).evaluateMaturedForecasts();
+  },
 };
 
 async function resolveJobAlerts(sql: Sql, jobId: string): Promise<void> {

@@ -32,6 +32,7 @@ export default async function PortfolioPage() {
           <a href="#positions">当前持仓</a>
           <a href="#exposure">持仓穿透</a>
           <a href="#health">数据健康</a>
+          <a href="#quality">长期质量</a>
           <a href="#reconciliation">对账明细</a>
         </nav>
         <div className="account"><span>卫星仓账户边界</span><strong>{data.meta.account}</strong><small>只读 · {data.meta.baseCurrency}</small></div>
@@ -117,6 +118,53 @@ export default async function PortfolioPage() {
           <article><span>.NDX 基准</span><strong>{percent(data.summary.benchmarkReturn)}</strong><small>同期累计收益</small></article>
           <article><span>超额收益</span><strong className="gain">{percent(data.summary.activeReturn)}</strong><small>组合 − 基准</small></article>
         </div>
+        {data.quality && (
+          <article className="panel risk-panel" id="quality">
+            <div className="panel-head">
+              <div><h2>长期质量</h2><p>预测误差、命题复核、决策覆盖与外部数据能力</p></div>
+              <span className={`reconciliation-status ${data.quality.dataSources.some((source) => source.required && source.health_status !== "success") ? "pending" : "passed"}`}>
+                {data.quality.dataSources.filter((source) => source.required && source.health_status !== "success").length
+                  ? "必需数据需关注" : "必需数据正常"}
+              </span>
+            </div>
+            <div className="risk-metrics">
+              <div><span>预测评估</span><strong>{data.quality.forecast.observations}</strong><small>截至 {data.quality.forecast.latest_realized_as_of ?? "暂无"}</small></div>
+              <div><span>方差 MAE</span><strong>{data.quality.forecast.mae == null ? "—" : (data.quality.forecast.mae * 10000).toFixed(2)}</strong><small>bp² 日频口径</small></div>
+              <div><span>方差 RMSE</span><strong>{data.quality.forecast.rmse == null ? "—" : (data.quality.forecast.rmse * 10000).toFixed(2)}</strong><small>bp² 日频口径</small></div>
+              <div><span>未决命题</span><strong>{data.quality.unresolvedClaims.length}</strong><small>{data.quality.unresolvedClaims.filter((claim) => claim.age_days > 90).length} 个超过 90 天</small></div>
+              <div><span>已完成事件预案</span><strong>{data.quality.playbookCoverage.covered_events}/{data.quality.playbookCoverage.completed_events}</strong><small>事件前预案就绪</small></div>
+              <div><span>人工决定</span><strong>{data.quality.decisionQuality.decisions}</strong><small>{data.quality.decisionQuality.executed} 个已记录执行</small></div>
+            </div>
+            <div className="risk-table">
+              {data.quality.dataSources.map((source) => (
+                <div className="risk-row" key={source.id}>
+                  <strong>{source.id}</strong>
+                  <span>{source.provider}</span>
+                  <span>{source.required ? "必需" : "可选"}</span>
+                  <span>{source.health_status}</span>
+                  <span>{source.effective_at?.slice(0, 10) ?? source.configured_status}</span>
+                </div>
+              ))}
+            </div>
+            <div className="risk-monitor-grid">
+              <div><span>分钟行情</span><strong>{data.quality.signalCoverage.intraday.observations} 条 · {data.quality.signalCoverage.intraday.instruments} 标的</strong></div>
+              <div><span>严格 RS± / ΔJ</span><strong>{data.quality.signalCoverage.semivariance.observations} 标的日 · {data.quality.signalCoverage.semivariance.return_observations ?? 0} 个收益观测</strong></div>
+              <div><span>IV / put skew</span><strong>{data.quality.signalCoverage.options.observations} 条 · {data.quality.signalCoverage.options.instruments} 标的</strong></div>
+            </div>
+            {data.quality.unresolvedClaims.length > 0 && (
+              <div className="operations-list">
+                {data.quality.unresolvedClaims.slice(0, 5).map((claim) => (
+                  <div className={`operation-item ${claim.age_days > 90 ? "action" : "review"}`} key={claim.id}>
+                    <span>命题</span>
+                    <div><strong>{claim.statement}</strong><p>{claim.kind} · 置信度 {(claim.confidence * 100).toFixed(0)}%</p></div>
+                    <small>{claim.age_days} 天未复核</small>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="exposure-note">Alpaca 实际回放已暂缓；未配置的分钟线和期权信号不会进入风险模型。</p>
+          </article>
+        )}
         {data.risk && (
           <article className="panel risk-panel" id="risk">
             <div className="panel-head">

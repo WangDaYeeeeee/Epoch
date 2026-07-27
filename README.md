@@ -97,6 +97,11 @@ FMP 保留为可选付费 Provider：
 ETF_HOLDINGS_PROVIDER=fmp FMP_API_KEY=... pnpm fund-holdings:sync
 ```
 
+Phase 6 可使用 Alpaca IEX 分钟线进行非生产回放。配置
+`ALPACA_API_KEY_ID`、`ALPACA_API_SECRET_KEY`、`ALPACA_INTRADAY_SYMBOLS`、
+`ALPACA_INTRADAY_START` 和 `ALPACA_INTRADAY_END` 后运行 `pnpm intraday:alpaca`。
+IEX 不是全市场合并行情，因此导入结果保持 degraded，不能直接作为生产风险输入。
+
 SEC N-PORT 可作为免费但低频、滞后的自动兜底：
 
 ```bash

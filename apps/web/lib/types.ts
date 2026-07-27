@@ -64,6 +64,25 @@ export type PortfolioPayload = {
   operations?: OperationsSnapshot;
   eventHorizon?: EventHorizonSnapshot;
   journal?: DecisionJournalEntry[];
+  quality?: {
+    forecast: { observations: number; mae: number | null; rmse: number | null; latest_realized_as_of: string | null };
+    confidenceCalibration: { confidence_bucket: number; observations: number; verified_rate: number }[];
+    unresolvedClaims: {
+      id: string; candidate_id: string; kind: string; statement: string;
+      confidence: number; as_of: string; age_days: number;
+    }[];
+    playbookCoverage: { completed_events: number; covered_events: number };
+    decisionQuality: { decisions: number; rejected: number; executed: number };
+    dataSources: {
+      id: string; capability: string; provider: string; configured_status: string;
+      required: boolean; health_status: string; detail: string | null; effective_at: string | null;
+    }[];
+    signalCoverage: {
+      intraday: { observations: number; instruments: number; earliest: string | null; latest: string | null };
+      semivariance: { observations: number; instruments: number; earliest: string | null; latest: string | null; return_observations: number | null };
+      options: { observations: number; instruments: number; earliest: string | null; latest: string | null };
+    };
+  };
   health: {
     status: string;
     ledgerBalanced: boolean;

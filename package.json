@@ -23,6 +23,8 @@
     "risk:run": "pnpm --filter @epoch/web risk:run",
     "import:flex": "pnpm --filter @epoch/web import:flex",
     "scheduler": "pnpm --filter @epoch/web scheduler",
-    "scheduler:once": "pnpm --filter @epoch/web scheduler:once"
+    "scheduler:once": "pnpm --filter @epoch/web scheduler:once",
+    "agent": "pnpm --filter @epoch/web agent",
+    "intraday:alpaca": "pnpm --filter @epoch/web intraday:alpaca"
   }
 }

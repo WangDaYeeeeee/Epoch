@@ -1,13 +1,6 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { NextResponse } from "next/server";
-import { buildRebalanceRiskInput, RebalanceIntentError, type RebalanceTargetWeight } from "@/lib/domain/rebalance-intent";
-import { buildPortfolioRiskInput } from "@/lib/domain/risk-input";
-import { createCalculationRequest, executeRecordedCalculation, PostgresCalculationRunRepository } from "@/lib/server/calculation-run";
-import { parseCsv } from "@/lib/server/csv";
-import { createDatabaseClient } from "@/lib/server/database";
-import { resolveDataRoot } from "@/lib/server/portfolio";
-import { riskCodeVersion } from "@/lib/server/risk-code-version";
+import { RebalanceIntentError, type RebalanceTargetWeight } from "@/lib/domain/rebalance-intent";
+import { evaluateRebalanceRisk } from "@/lib/server/rebalance-risk";
 
 export const dynamic = "force-dynamic";
 
@@ -36,28 +29,8 @@ export async function POST(request: Request) {
     }, { status: 422 });
   }
 
-  const dataRoot = resolveDataRoot();
-  if (!dataRoot) return NextResponse.json({ error: "risk_input_unavailable" }, { status: 503 });
   try {
-    const positions = parseCsv(readFileSync(resolve(dataRoot, "normalized/positions.csv"), "utf8"));
-    const bars = parseCsv(readFileSync(resolve(dataRoot, "normalized/market-bars.csv"), "utf8"));
-    const current = buildPortfolioRiskInput(positions, bars);
-    const payload = buildRebalanceRiskInput(current, weights);
-    const calculation = createCalculationRequest({
-      calculationType: "portfolio-risk-rebalance",
-      asOf: payload.asOf,
-      codeVersion: riskCodeVersion(),
-      strategyVersion: "epoch-satellite-v0.1.0",
-      parameterSetVersion: "default-draft-v0.1.0",
-      payload: JSON.parse(JSON.stringify(payload)) as Record<string, unknown>,
-    });
-    const sql = createDatabaseClient();
-    try {
-      const response = await executeRecordedCalculation(new PostgresCalculationRunRepository(sql), calculation);
-      return NextResponse.json(response);
-    } finally {
-      await sql.end();
-    }
+    return NextResponse.json(await evaluateRebalanceRisk(weights));
   } catch (error) {
     if (error instanceof RebalanceIntentError) {
       return NextResponse.json({ error: "invalid_rebalance_intent", detail: error.message }, { status: 422 });

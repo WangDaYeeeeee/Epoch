@@ -1,0 +1,4 @@
+interface:
+  display_name: "Epoch Investment Agent"
+  short_description: "Run audited investment research and review workflows"
+  default_prompt: "Use $epoch-investment-agent to run an audited Epoch investment task."

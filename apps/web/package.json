@@ -17,7 +17,9 @@
     "risk:run": "node --import tsx scripts/run-portfolio-risk.ts",
     "import:flex": "node --import tsx scripts/import-flex.ts",
     "scheduler": "node --import tsx scripts/scheduler.ts",
-    "scheduler:once": "node --import tsx scripts/scheduler.ts --once"
+    "scheduler:once": "node --import tsx scripts/scheduler.ts --once",
+    "agent": "node --import tsx scripts/agent-gateway.ts",
+    "intraday:alpaca": "node --import tsx scripts/import-alpaca-intraday.ts"
   },
   "dependencies": {
     "@types/node": "^22.10.0",

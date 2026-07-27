@@ -204,6 +204,8 @@ Phase 1 最终验收：所有差异均已定位到事件、估值来源基差或
 
 ### Phase 5：通用 Epoch Investment Agent
 
+状态：已完成（2026-07-27），验收记录见 [reviews/PHASE_5.md](reviews/PHASE_5.md)。已交付统一 Agent Gateway、七类任务契约、AgentRun 审计、脱敏权限快照、有限草稿写入、人工反馈、本地 CLI、固定回归集和仓库内 `epoch-investment-agent` Skill；调仓建议由 Epoch 复用现有风险服务独立执行 Policy Gate。
+
 目标：让 Codex 或 Claude 通过一个通用 Agent 使用 Epoch 的数据、计算和投资策略完成研究与判断。
 
 交付：
@@ -226,6 +228,8 @@ Phase 1 最终验收：所有差异均已定位到事件、估值来源基差或
 - 外部 Agent 不可用时，账本、绩效、风险计算、Policy Gate、Operations 和 Journal 仍正常运行。
 
 ### Phase 6：长期运行与模型增强
+
+进度：进行中。第一切片（预测/置信度质量统计、长期命题复核、数据源失效监控，以及供应商无关的日内/期权信号契约）已于 2026-07-27 验收；严格日内与期权数据的实时接入等待数据供应商选择与凭证。
 
 候选范围：
 

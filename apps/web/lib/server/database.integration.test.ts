@@ -22,6 +22,11 @@ import { PostgresPositionGovernanceRepository } from "./position-governance";
 import { PostgresExceptionRecordRepository } from "./exception-record";
 import { PostgresThemeRepository } from "./theme";
 import { PostgresReviewRepository } from "./review";
+import { PostgresAgentGatewayRepository } from "./agent-gateway";
+import { PostgresQualityMetricsRepository } from "./quality-metrics";
+import { PostgresDataSourceHealthRepository } from "./data-source-health";
+import { PostgresMarketSignalRepository } from "./market-signal";
+import { PostgresResearchMemoryRepository } from "./research-memory";
 
 const databaseDescribe = process.env.DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 
@@ -833,6 +838,335 @@ Cash Transactions,Data,USD,cash-${uniqueId},20260719,Deposits/Withdrawals,Deposi
       }
       await sql`DELETE FROM exception_record WHERE id = ${exceptionId}`;
       await sql`DELETE FROM investment_event WHERE id = ${eventId}`;
+    }
+  });
+
+  it("audits an AgentRun without exposing forbidden data or accepting a model-authored decision", async () => {
+    const gateway = new PostgresAgentGatewayRepository(sql);
+    const run = await gateway.start({
+      taskType: "review_portfolio",
+      model: "integration-agent",
+      promptVersion: "epoch-agent-prompt/1.0",
+      input: { objective: "Review portfolio risks" },
+    });
+    try {
+      expect(run.status).toBe("running");
+      expect(run.dataSnapshot).toMatchObject({
+        permissions: {
+          forbidden: expect.arrayContaining(["ledger", "investment_decision", "order"]),
+        },
+      });
+      expect(JSON.stringify(run.dataSnapshot)).not.toContain("broker_reference");
+      const completed = await gateway.complete({
+        runId: run.id,
+        output: {
+          summary: "Portfolio remains below the mechanical risk gate.",
+          findings: ["Issuer coverage remains incomplete."],
+          recommendations: ["Refresh the missing fund holdings snapshot."],
+        },
+        citations: [],
+        limitations: ["This integration run does not invoke an external model."],
+      });
+      expect(completed).toMatchObject({
+        status: "completed",
+        strategyVersion: "epoch-satellite-v0.1.0",
+        parameterSetVersion: "default-draft-v0.1.0",
+      });
+      await expect(gateway.feedback({
+        runId: run.id,
+        disposition: "accepted",
+        comment: "Accepted as an integration fixture.",
+      })).resolves.toEqual(expect.any(String));
+    } finally {
+      await sql`DELETE FROM agent_run_feedback WHERE agent_run_id = ${run.id}`;
+      await sql`DELETE FROM agent_run WHERE id = ${run.id}`;
+    }
+  });
+
+  it("materializes an Agent review only as an idempotent draft", async () => {
+    const gateway = new PostgresAgentGatewayRepository(sql);
+    const run = await gateway.start({
+      taskType: "run_review",
+      model: "integration-agent",
+      promptVersion: "epoch-agent-prompt/1.0",
+      input: { cadence: "weekly" },
+    });
+    let reviewId: string | undefined;
+    try {
+      await gateway.complete({
+        runId: run.id,
+        output: {
+          cadence: "weekly",
+          summary: "Weekly integration review.",
+          whatWorked: "The risk gate remained independent.",
+          whatFailed: "No external model was invoked.",
+          followUp: "Retain the fixed evidence fixture.",
+        },
+        citations: [],
+        limitations: ["Integration fixture only."],
+      });
+      const first = await gateway.materializeDraft(run.id);
+      const second = await gateway.materializeDraft(run.id);
+      expect(second).toEqual(first);
+      reviewId = String(first.objectIds.reviewId);
+      const rows = await sql<{ status: string }[]>`
+        SELECT status FROM investment_review WHERE id = ${reviewId}
+      `;
+      expect(rows[0].status).toBe("draft");
+    } finally {
+      await sql`DELETE FROM agent_run_materialization WHERE agent_run_id = ${run.id}`;
+      if (reviewId) await sql`DELETE FROM investment_review WHERE id = ${reviewId}`;
+      await sql`DELETE FROM agent_run WHERE id = ${run.id}`;
+    }
+  });
+
+  it("materializes cited candidate research as draft claims, assessment and proposed tier", async () => {
+    const gateway = new PostgresAgentGatewayRepository(sql);
+    const allocation = new PostgresAllocationJudgmentRepository(sql);
+    const research = new PostgresResearchEvidenceRepository(sql);
+    const marker = randomUUID();
+    const candidateId = await allocation.createCandidate(`TEST:${marker.replaceAll("-", "").slice(0, 12).toUpperCase()}`);
+    const evidenceId = await research.saveEvidence({
+      title: "Fixed Agent research evidence",
+      sourceType: "primary",
+      sourceName: `agent-integration-${marker}`,
+      sourceUrl: "https://example.com/agent-evidence",
+      observedAt: "2026-07-27T00:00:00Z",
+      effectiveDate: "2026-07-26",
+      excerpt: "Orders increased in the fixed fixture.",
+      contentHash: marker.replaceAll("-", "").padEnd(64, "a"),
+    });
+    const run = await gateway.start({
+      taskType: "research_candidate",
+      model: "integration-agent",
+      promptVersion: "epoch-agent-prompt/1.0",
+      input: { candidateId },
+    });
+    let assessmentId: string | undefined;
+    let weightTierId: string | undefined;
+    try {
+      await gateway.complete({
+        runId: run.id,
+        output: {
+          candidateId,
+          claims: [{
+            kind: "fact",
+            statement: "Orders increased.",
+            reasoning: "",
+            confidence: 0.9,
+            asOf: "2026-07-27",
+            supportingEvidenceIds: [evidenceId],
+            counterEvidenceIds: [],
+          }],
+          factorAssessment: {
+            asOf: "2026-07-27",
+            summary: "Fixed Agent assessment",
+            rankingReason: "Qualitative comparison only",
+            items: FACTOR_NAMES.map((factor) => ({
+              factor,
+              conclusion: "neutral",
+              confidence: 0.6,
+              evidence: "See cited primary evidence.",
+              counterEvidence: "No additional counterevidence in the fixture.",
+              direction: "stable",
+              impact: "Neutral pending owner review.",
+            })),
+          },
+          weightTierProposal: {
+            asOf: "2026-07-27",
+            weightPercent: 20,
+            earningsExpectation: "Orders convert into measurable earnings.",
+            primaryRisk: "Orders fail to convert.",
+            invalidationCondition: "Orders contract for two quarters.",
+            whyThisTier: "Positive evidence with material remaining uncertainty.",
+          },
+        },
+        citations: [{
+          evidenceId,
+          title: "Fixed Agent research evidence",
+          supports: "Order-growth fact.",
+        }],
+        limitations: ["Fixed evidence set only."],
+      });
+      const materialized = await gateway.materializeDraft(run.id);
+      assessmentId = String(materialized.objectIds.assessmentId);
+      weightTierId = String(materialized.objectIds.weightTierId);
+      await expect(allocation.loadCandidate(candidateId)).resolves.toMatchObject({
+        assessment_id: assessmentId,
+        assessment_status: "draft",
+        weight_tier_id: weightTierId,
+        weight_tier_status: "proposed",
+      });
+    } finally {
+      await sql`DELETE FROM agent_run_materialization WHERE agent_run_id = ${run.id}`;
+      if (assessmentId) await sql`DELETE FROM factor_assessment_claim WHERE assessment_id = ${assessmentId}`;
+      if (weightTierId) await sql`DELETE FROM weight_tier WHERE id = ${weightTierId}`;
+      if (assessmentId) {
+        await sql`DELETE FROM factor_assessment_item WHERE assessment_id = ${assessmentId}`;
+        await sql`DELETE FROM factor_assessment WHERE id = ${assessmentId}`;
+      }
+      await sql`
+        DELETE FROM claim_evidence
+        WHERE claim_id IN (SELECT id FROM research_claim WHERE candidate_id = ${candidateId})
+      `;
+      await sql`DELETE FROM research_claim WHERE candidate_id = ${candidateId}`;
+      await sql`DELETE FROM agent_run WHERE id = ${run.id}`;
+      await sql`DELETE FROM research_evidence WHERE id = ${evidenceId}`;
+      await sql`DELETE FROM investment_candidate WHERE id = ${candidateId}`;
+    }
+  });
+
+  it("tracks claim outcomes and confidence calibration without overwriting the claim", async () => {
+    const allocation = new PostgresAllocationJudgmentRepository(sql);
+    const research = new PostgresResearchEvidenceRepository(sql);
+    const quality = new PostgresQualityMetricsRepository(sql);
+    const marker = randomUUID();
+    const candidateId = await allocation.createCandidate(`TEST:${marker.replaceAll("-", "").slice(0, 12).toUpperCase()}`);
+    const evidenceId = await research.saveEvidence({
+      title: "Claim outcome evidence",
+      sourceType: "primary",
+      sourceName: `claim-outcome-${marker}`,
+      sourceUrl: "https://example.com/claim-outcome",
+      observedAt: "2026-07-27T00:00:00Z",
+      effectiveDate: "2026-07-27",
+      excerpt: "The observable threshold was reached.",
+      contentHash: marker.replaceAll("-", "").padEnd(64, "b"),
+    });
+    const claimId = await research.saveClaim(candidateId, {
+      kind: "hypothesis",
+      statement: "The threshold will be reached.",
+      reasoning: "The leading indicator crossed its stated anchor.",
+      confidence: 0.8,
+      asOf: "2026-07-20",
+      supportingEvidenceIds: [evidenceId],
+      counterEvidenceIds: [],
+    });
+    try {
+      await quality.recordClaimOutcome({
+        claimId,
+        outcome: "verified_true",
+        evaluatedAsOf: "2026-07-27",
+        rationale: "The fixed observable threshold was reached.",
+        evidenceId,
+      });
+      const dashboard = await quality.loadDashboard();
+      expect(dashboard.confidenceCalibration).toEqual(expect.arrayContaining([
+        expect.objectContaining({ observations: expect.any(Number), verified_rate: expect.any(Number) }),
+      ]));
+      expect(dashboard.unresolvedClaims).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: claimId }),
+      ]));
+    } finally {
+      await sql`DELETE FROM claim_outcome WHERE claim_id = ${claimId}`;
+      await sql`DELETE FROM claim_evidence WHERE claim_id = ${claimId}`;
+      await sql`DELETE FROM research_claim WHERE id = ${claimId}`;
+      await sql`DELETE FROM research_evidence WHERE id = ${evidenceId}`;
+      await sql`DELETE FROM investment_candidate WHERE id = ${candidateId}`;
+    }
+  });
+
+  it("classifies configured data sources from append-only health observations", async () => {
+    const sources = new PostgresDataSourceHealthRepository(sql);
+    const observationId = await sources.observe({
+      sourceId: "daily-market-bars",
+      status: "degraded",
+      effectiveAt: "2026-07-27T00:00:00Z",
+      observedAt: "2099-07-27T01:00:00Z",
+      detail: "Integration fixture retains data but reports degraded provenance.",
+    });
+    try {
+      await expect(sources.load()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: "daily-market-bars",
+          configured_status: "active",
+          observation_status: "degraded",
+          health_status: "degraded",
+        }),
+        expect.objectContaining({
+          id: "options-iv",
+          configured_status: "unavailable",
+          health_status: "unavailable",
+        }),
+      ]));
+    } finally {
+      await sql`DELETE FROM data_source_observation WHERE id = ${observationId}`;
+    }
+  });
+
+  it("derives and persists strict daily semivariance from idempotent minute bars", async () => {
+    const signals = new PostgresMarketSignalRepository(sql);
+    const instrumentId = `TEST:${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+    const provider = "integration-semivariance";
+    const common = {
+      instrumentId, open: 100, high: 102, low: 98, volume: 100,
+      provider, observedAt: "2026-07-27T20:01:00Z",
+    };
+    try {
+      expect(await signals.ingestIntradayBars([
+        { ...common, timestamp: "2026-07-27T13:30:00Z", close: 100 },
+        { ...common, timestamp: "2026-07-27T13:31:00Z", close: 101 },
+        { ...common, timestamp: "2026-07-27T13:32:00Z", close: 99 },
+      ])).toBe(3);
+      expect(await signals.ingestIntradayBars([
+        { ...common, timestamp: "2026-07-27T13:30:00Z", close: 100 },
+      ])).toBe(0);
+      expect(await signals.refreshDailySemivariance(provider)).toBe(1);
+      const [metric] = await sql<{
+        positive_semivariance: number; negative_semivariance: number;
+        signed_jump: number; return_observations: number;
+      }[]>`
+        SELECT positive_semivariance, negative_semivariance, signed_jump, return_observations
+        FROM intraday_semivariance_daily
+        WHERE instrument_id = ${instrumentId} AND provider = ${provider}
+      `;
+      expect(metric.return_observations).toBe(2);
+      expect(metric.signed_jump).toBeCloseTo(
+        Math.log(101 / 100) ** 2 - Math.log(99 / 101) ** 2,
+      );
+    } finally {
+      await sql`DELETE FROM intraday_semivariance_daily WHERE instrument_id = ${instrumentId}`;
+      await sql`DELETE FROM intraday_bar_observation WHERE instrument_id = ${instrumentId}`;
+    }
+  });
+
+  it("retrieves research memory across claims and evidence without exposing writes", async () => {
+    const allocation = new PostgresAllocationJudgmentRepository(sql);
+    const research = new PostgresResearchEvidenceRepository(sql);
+    const memory = new PostgresResearchMemoryRepository(sql);
+    const marker = randomUUID().replaceAll("-", "");
+    const phrase = `memory-${marker.slice(0, 12)}`;
+    const candidateId = await allocation.createCandidate(`TEST:${marker.slice(0, 12).toUpperCase()}`);
+    const evidenceId = await research.saveEvidence({
+      title: `${phrase} primary observation`,
+      sourceType: "primary",
+      sourceName: phrase,
+      sourceUrl: "https://example.com/memory",
+      observedAt: "2026-07-27T00:00:00Z",
+      effectiveDate: "2026-07-27",
+      excerpt: "A fixed observation for cross-object memory retrieval.",
+      contentHash: marker.padEnd(64, "c"),
+    });
+    const claimId = await research.saveClaim(candidateId, {
+      kind: "fact",
+      statement: `${phrase} demand increased`,
+      reasoning: "Supported by the fixed primary observation.",
+      confidence: 0.9,
+      asOf: "2026-07-27",
+      supportingEvidenceIds: [evidenceId],
+      counterEvidenceIds: [],
+    });
+    try {
+      const results = await memory.search(`${phrase} demand`);
+      expect(results).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: claimId, kind: "claim", candidate_id: candidateId }),
+        expect.objectContaining({ id: evidenceId, kind: "evidence", source: phrase }),
+      ]));
+      expect(results[0].score).toBeGreaterThanOrEqual(results.at(-1)!.score);
+    } finally {
+      await sql`DELETE FROM claim_evidence WHERE claim_id = ${claimId}`;
+      await sql`DELETE FROM research_claim WHERE id = ${claimId}`;
+      await sql`DELETE FROM research_evidence WHERE id = ${evidenceId}`;
+      await sql`DELETE FROM investment_candidate WHERE id = ${candidateId}`;
     }
   });
 });

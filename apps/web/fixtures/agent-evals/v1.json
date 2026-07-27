@@ -1,0 +1,88 @@
+[
+  {
+    "taskType": "research_candidate",
+    "output": {
+      "candidateId": "00000000-0000-0000-0000-000000000001",
+      "claims": [
+        {
+          "kind": "fact",
+          "statement": "Orders increased in the fixed filing fixture.",
+          "confidence": 0.9,
+          "asOf": "2026-07-27",
+          "supportingEvidenceIds": ["00000000-0000-0000-0000-000000000101"],
+          "counterEvidenceIds": []
+        }
+      ],
+      "factorAssessment": {
+        "asOf": "2026-07-27",
+        "summary": "Fixed six-factor assessment.",
+        "rankingReason": "The fixture preserves qualitative judgment without a composite score.",
+        "items": [
+          { "factor": "momentum", "conclusion": "neutral", "confidence": 0.6, "evidence": "Stable relative trend.", "counterEvidence": "Short history.", "direction": "stable", "impact": "Neutral." },
+          { "factor": "certainty", "conclusion": "neutral", "confidence": 0.6, "evidence": "Visible orders.", "counterEvidence": "Macro uncertainty.", "direction": "stable", "impact": "Neutral." },
+          { "factor": "moat", "conclusion": "strong", "confidence": 0.7, "evidence": "High switching costs.", "counterEvidence": "Active competitors.", "direction": "stable", "impact": "Positive." },
+          { "factor": "earnings_quality", "conclusion": "neutral", "confidence": 0.6, "evidence": "Cash conversion.", "counterEvidence": "Working-capital volatility.", "direction": "stable", "impact": "Neutral." },
+          { "factor": "earnings_revision", "conclusion": "neutral", "confidence": 0.5, "evidence": "Estimate stability.", "counterEvidence": "No fresh guide.", "direction": "unknown", "impact": "Neutral." },
+          { "factor": "valuation", "conclusion": "weak", "confidence": 0.7, "evidence": "Premium multiple.", "counterEvidence": "Superior growth.", "direction": "stable", "impact": "Caps the tier." }
+        ]
+      },
+      "weightTierProposal": {
+        "asOf": "2026-07-27",
+        "weightPercent": 20,
+        "earningsExpectation": "Orders convert into measurable earnings growth.",
+        "primaryRisk": "The premium multiple compresses.",
+        "invalidationCondition": "Orders contract for two consecutive quarters.",
+        "whyThisTier": "Evidence is positive but incomplete."
+      }
+    }
+  },
+  {
+    "taskType": "review_position",
+    "output": {
+      "summary": "The position remains within its stated thesis.",
+      "findings": ["No fixed-fixture invalidation was triggered."],
+      "recommendations": ["Keep the next catalyst on the watchlist."]
+    }
+  },
+  {
+    "taskType": "review_portfolio",
+    "output": {
+      "summary": "The portfolio remains below the risk gate.",
+      "findings": ["Look-through coverage is incomplete."],
+      "recommendations": ["Refresh the missing holdings snapshot."]
+    }
+  },
+  {
+    "taskType": "prepare_event",
+    "output": {
+      "eventId": "00000000-0000-0000-0000-000000000201",
+      "summary": "Prepare observable upside and downside branches.",
+      "branches": [{ "scope": "instrument", "scenario": "beat", "trigger": "guidance above anchor", "action": "review", "riskDirection": "neutral" }]
+    }
+  },
+  {
+    "taskType": "assess_event",
+    "output": {
+      "eventId": "00000000-0000-0000-0000-000000000201",
+      "summary": "The observed result matched the neutral branch.",
+      "proposedAction": "No change pending owner review."
+    }
+  },
+  {
+    "taskType": "propose_rebalance",
+    "output": {
+      "targetWeights": [{ "instrumentId": "US:GOOGL", "weight": 0.2 }],
+      "rationale": "Fixed proposal for independent Epoch evaluation."
+    }
+  },
+  {
+    "taskType": "run_review",
+    "output": {
+      "cadence": "weekly",
+      "summary": "Weekly fixed-fixture review.",
+      "whatWorked": "Policy evaluation remained independent.",
+      "whatFailed": "The fixture has no external model.",
+      "followUp": "Retain deterministic evidence."
+    }
+  }
+]

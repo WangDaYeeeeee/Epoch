@@ -20,6 +20,9 @@ import { PostgresFundHoldingsRepository } from "./fund-holdings-sync";
 import { PostgresCalculationRunRepository, type CalculationRunRecord } from "./calculation-run";
 import { PostgresRiskDriftAnchorRepository } from "./risk-drift-anchor";
 import { PostgresOperationsRepository } from "./operations";
+import { PostgresQualityMetricsRepository } from "./quality-metrics";
+import { PostgresDataSourceHealthRepository } from "./data-source-health";
+import { PostgresMarketSignalRepository } from "./market-signal";
 
 type Row = Record<string, string>;
 type PrivatePortfolioRows = { performance: Row[]; transactions: Row[]; positions: Row[] };
@@ -323,13 +326,16 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
   const eventAsOf = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date());
-  const [riskRuns, scenarioRuns, driftAnchor, eventHorizon, journal, workflowItems] = await Promise.all([
+  const [riskRuns, scenarioRuns, driftAnchor, eventHorizon, journal, workflowItems, quality, dataSources, signalCoverage] = await Promise.all([
     riskRepository.loadCompletedHistory("portfolio-risk", 30),
     riskRepository.loadCompletedHistory("portfolio-risk-rebalance", 5),
     new PostgresRiskDriftAnchorRepository(sql).loadLatest(),
     new PostgresEventHorizonRepository(sql).load(eventAsOf),
     new PostgresDecisionJournalRepository(sql).load(20),
     new PostgresOperationsRepository(sql).loadWorkflowItems(eventAsOf),
+    new PostgresQualityMetricsRepository(sql).loadDashboard(),
+    new PostgresDataSourceHealthRepository(sql).load(),
+    new PostgresMarketSignalRepository(sql).coverage(),
   ]);
   const dataStatus = payload.health.marketDataFreshness?.status === "fresh" ? "fresh" : "stale";
   const riskHistory = riskRuns
@@ -362,6 +368,7 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     ...(riskDrift ? { riskDrift } : {}),
     eventHorizon,
     ...(journal.length ? { journal } : {}),
+    quality: { ...quality, dataSources, signalCoverage } as unknown as PortfolioPayload["quality"],
     operations: mergeOperationItems(buildOperationsSnapshot({
       ...payload,
       health: {
