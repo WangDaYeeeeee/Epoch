@@ -159,6 +159,8 @@ https://www.ishares.com/us/products/239705/ishares-semiconductor-etf/14672718125
 
 尚未执行真实同步：当前私有目录中没有 SOXX holdings 文件，也未配置代表所有者联系方式的 `SEC_USER_AGENT`，因此没有以虚假身份发起 SEC 自动请求。FMP 属付费可选项，不再是默认完成路径。
 
+2026-07-27 再次核验 SEC 官方索引：SOXX（Series `S000004354`）存在 2026-05-28 提交、报告期为 2026-03-31 的公开 N-PORT，Accession `0002071691-26-012504`，XML 结构与现有适配器匹配。当前阻塞不是申报缺失或解析能力，而是本地尚未配置符合 SEC fair-access 要求的真实联系方式 `SEC_USER_AGENT`；项目不会伪造身份发起自动请求。
+
 ## 第六切片：行业、地域与主题穿透
 
 分类版本升级为 `phase2-bootstrap-v2`：
