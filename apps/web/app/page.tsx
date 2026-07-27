@@ -1,6 +1,7 @@
 import { PerformanceChart } from "@/components/performance-chart";
 import { MarketRefreshControl } from "@/components/market-refresh-control";
 import { RebalanceRiskForm, RiskAnchorForm } from "@/components/risk-actions";
+import { WorkflowConsole } from "@/components/workflow-console";
 import type { PortfolioPayload } from "@/lib/types";
 import { loadPortfolioPreferDatabase } from "@/lib/server/portfolio";
 
@@ -22,7 +23,11 @@ export default async function PortfolioPage() {
       <aside>
         <div className="brand">EPOCH</div>
         <nav>
-          <a className="active" href="#overview">组合总览</a>
+          <a className="active" href="#operations">今日工作台</a>
+          <a href="#events">事件视界</a>
+          <a href="#journal">决策日志</a>
+          <a href="#workflow">工作流录入</a>
+          <a href="#overview">组合总览</a>
           <a href="#risk">风险监控</a>
           <a href="#positions">当前持仓</a>
           <a href="#exposure">持仓穿透</a>
@@ -36,6 +41,76 @@ export default async function PortfolioPage() {
           <div><p className="eyebrow">PORTFOLIO / OVERVIEW</p><h1>组合表现</h1><p>可信账本、净值轨迹与基准比较</p></div>
           <div className="asof"><span className="pulse" />数据截至 {data.meta.asOf}</div>
         </header>
+        {data.operations && (
+          <article className="panel operations-panel" id="operations">
+            <div className="panel-head">
+              <div><h2>今日工作台</h2><p>确定性信号生成 · 不含 Agent 判断 · 不自动交易</p></div>
+              <span className={`operations-status ${data.operations.status}`}>
+                {data.operations.status === "clear" ? "无待办" : data.operations.status === "critical" ? "存在关键事项" : "需要关注"}
+              </span>
+            </div>
+            <div className="operations-summary">
+              <div><strong>{data.operations.counts.critical}</strong><span>关键</span></div>
+              <div><strong>{data.operations.counts.action}</strong><span>待处理</span></div>
+              <div><strong>{data.operations.counts.review}</strong><span>待复核</span></div>
+            </div>
+            {data.operations.items.length ? (
+              <div className="operations-list">
+                {data.operations.items.map((item) => (
+                  <div className={`operation-item ${item.priority}`} key={item.id}>
+                    <span>{({
+                      risk: "风险", data: "数据", event: "事件", coverage: "覆盖",
+                      refill: "回补", governance: "治理", review: "复盘", approval: "确认",
+                    } as const)[item.category]}</span>
+                    <div><strong>{item.title}</strong><p>{item.detail}</p></div>
+                    <small>{item.evidence}</small>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="operations-clear">当前数据、风险卡口与覆盖检查均无待处理事项。</p>}
+          </article>
+        )}
+        {data.eventHorizon && (
+          <article className="panel event-horizon-panel" id="events">
+            <div className="panel-head">
+              <div><h2>事件视界</h2><p>近区为未来 {data.eventHorizon.nearWindowTradingDays} 个交易日</p></div>
+              <span className={data.eventHorizon.missingPlaybookCount ? "reconciliation-status pending" : "reconciliation-status passed"}>
+                {data.eventHorizon.missingPlaybookCount ? `${data.eventHorizon.missingPlaybookCount} 个缺失预案` : "近区预案完整"}
+              </span>
+            </div>
+            {data.eventHorizon.items.length ? (
+              <div className="event-horizon-list">
+                {data.eventHorizon.items.map((event) => (
+                  <div className={`event-horizon-item ${event.needsPlaybook ? "missing" : ""}`} key={event.id}>
+                    <time>{event.scheduledDate}</time>
+                    <div><strong>{event.title}</strong><p>{event.instrumentId ?? "组合级"} · {event.eventType}</p></div>
+                    <span>{event.zone === "past" ? "已过" : event.tradingDaysAway === 0 ? "今日" : `${event.tradingDaysAway} 个交易日`}</span>
+                    <small>{event.playbookStatus === "ready" ? "预案就绪" : event.playbookStatus === "draft" ? "预案草稿" : "缺少预案"}</small>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="operations-clear">当前没有已登记的计划事件。</p>}
+          </article>
+        )}
+        {(data.journal?.length ?? 0) > 0 && (
+          <article className="panel journal-panel" id="journal">
+            <div className="panel-head">
+              <div><h2>决策日志</h2><p>调仓测算 → Policy Gate → 所有者决定 → 外部执行</p></div>
+              <span className="reconciliation-status passed">{data.journal!.length} 条记录</span>
+            </div>
+            <div className="journal-list">
+              {data.journal!.map((entry) => (
+                <div className={`journal-item ${entry.outcome}`} key={entry.id}>
+                  <time>{entry.decidedAt.slice(0, 16).replace("T", " ")}</time>
+                  <div><strong>{entry.rationale}</strong><p>{entry.triggerType} · CalculationRun {entry.calculationRunId.slice(0, 8)}</p></div>
+                  <span>{entry.outcome === "confirmed" ? "已确认" : entry.outcome === "modified" ? "修改后确认" : "已拒绝"}</span>
+                  <small>{entry.execution ? `已执行 · ${entry.execution.brokerReference}` : "未记录执行"}</small>
+                </div>
+              ))}
+            </div>
+          </article>
+        )}
+        <WorkflowConsole strategyVersion={data.meta.strategyVersion} />
         <div className="metrics" id="overview">
           <article><span>组合净值</span><strong className="gold">{money.format(data.summary.nav)}</strong><small>{money.format(invested)} 已投资</small></article>
           <article><span>累计收益</span><strong className="gain">{percent(data.summary.portfolioReturn)}</strong><small>当前所选历史区间</small></article>

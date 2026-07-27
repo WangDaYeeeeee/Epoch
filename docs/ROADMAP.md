@@ -170,6 +170,8 @@ Phase 1 最终验收：所有差异均已定位到事件、估值来源基差或
 
 ### Phase 4：Operations、事件视界与 Journal
 
+状态：已完成（2026-07-27），验收记录见 [reviews/PHASE_4.md](reviews/PHASE_4.md)。已交付确定性 Operations、事件视界、Theme/ThemeVersion、六因子评估、权重档位、研究证据链、Decision / ExecutionRecord Journal、三批回补状态机、入退场治理、版本化 PlaybookBranch、特事特看 ExceptionRecord、多周期 Review、季度吸收与《投资策略》5.1 调仓记录快照。系统不自动生成权重或订单；卡口、回补、禁回购、预案和冷静期边界均由确定性规则独立执行。
+
 目标：准确回答“今天有什么必须处理，当时为什么这样做”。
 
 交付：

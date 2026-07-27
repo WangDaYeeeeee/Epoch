@@ -1,6 +1,9 @@
 import type { ExposureSnapshot } from "./domain/exposure";
 import type { ReturnAttribution } from "./domain/return-attribution";
 import type { RiskDriftSnapshot } from "./domain/risk-drift";
+import type { OperationsSnapshot } from "./domain/operations";
+import type { EventHorizonSnapshot } from "./domain/event-horizon";
+import type { DecisionJournalEntry } from "./domain/decision-journal";
 
 export type PortfolioRiskSnapshot = {
   calculationId: string;
@@ -58,6 +61,9 @@ export type PortfolioPayload = {
   riskHistory?: PortfolioRiskSnapshot[];
   riskScenarios?: PortfolioRiskSnapshot[];
   riskDrift?: RiskDriftSnapshot;
+  operations?: OperationsSnapshot;
+  eventHorizon?: EventHorizonSnapshot;
+  journal?: DecisionJournalEntry[];
   health: {
     status: string;
     ledgerBalanced: boolean;

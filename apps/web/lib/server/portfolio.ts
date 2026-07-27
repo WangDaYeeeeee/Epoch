@@ -5,6 +5,9 @@ import type { PortfolioPayload, PortfolioRiskSnapshot } from "@/lib/types";
 import { checkIbkrReadOnlyConnection } from "../connectors/ibkr-web";
 import { buildExposureSnapshot, type InstrumentClassification } from "../domain/exposure";
 import { calculateRiskDrift } from "../domain/risk-drift";
+import { buildOperationsSnapshot, mergeOperationItems } from "../domain/operations";
+import { PostgresEventHorizonRepository } from "./event-horizon";
+import { PostgresDecisionJournalRepository } from "./decision-journal";
 import { discoverHeldFunds, holdingsClassifications, selectFundHoldingsSnapshot } from "../domain/fund-holdings";
 import { INSTRUMENT_CLASSIFICATION_VERSION, instrumentClassifications } from "../domain/instrument-classifications";
 import { calculateMoneyWeightedReturn, performanceCashFlows } from "../domain/performance";
@@ -16,6 +19,7 @@ import { calculateDemoLedger } from "./demo-ledger";
 import { PostgresFundHoldingsRepository } from "./fund-holdings-sync";
 import { PostgresCalculationRunRepository, type CalculationRunRecord } from "./calculation-run";
 import { PostgresRiskDriftAnchorRepository } from "./risk-drift-anchor";
+import { PostgresOperationsRepository } from "./operations";
 
 type Row = Record<string, string>;
 type PrivatePortfolioRows = { performance: Row[]; transactions: Row[]; positions: Row[] };
@@ -316,10 +320,16 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     lastObservedAt: new Date(row.last_observed_at).toISOString(),
   }));
   const riskRepository = new PostgresCalculationRunRepository(sql);
-  const [riskRuns, scenarioRuns, driftAnchor] = await Promise.all([
+  const eventAsOf = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const [riskRuns, scenarioRuns, driftAnchor, eventHorizon, journal, workflowItems] = await Promise.all([
     riskRepository.loadCompletedHistory("portfolio-risk", 30),
     riskRepository.loadCompletedHistory("portfolio-risk-rebalance", 5),
     new PostgresRiskDriftAnchorRepository(sql).loadLatest(),
+    new PostgresEventHorizonRepository(sql).load(eventAsOf),
+    new PostgresDecisionJournalRepository(sql).load(20),
+    new PostgresOperationsRepository(sql).loadWorkflowItems(eventAsOf),
   ]);
   const dataStatus = payload.health.marketDataFreshness?.status === "fresh" ? "fresh" : "stale";
   const riskHistory = riskRuns
@@ -350,6 +360,18 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     ...(riskHistory.length ? { riskHistory } : {}),
     ...(riskScenarios.length ? { riskScenarios } : {}),
     ...(riskDrift ? { riskDrift } : {}),
+    eventHorizon,
+    ...(journal.length ? { journal } : {}),
+    operations: mergeOperationItems(buildOperationsSnapshot({
+      ...payload,
+      health: {
+        ...payload.health,
+        ...(operationalAlerts.length ? { operationalAlerts } : {}),
+      },
+      ...(latestRiskSnapshot ? { risk: latestRiskSnapshot } : {}),
+      ...(riskDrift ? { riskDrift } : {}),
+      eventHorizon,
+    }), workflowItems),
   };
 }
 
@@ -372,12 +394,16 @@ export async function loadPortfolioPreferDatabase(): Promise<PortfolioPayload> {
     await sql.end();
   }
   const brokerConnection = await checkIbkrReadOnlyConnection({ baseUrl: process.env.IBKR_WEB_API_URL });
-  return {
+  const withBrokerConnection = {
     ...payload,
     health: {
       ...payload.health,
       brokerConnection,
     },
+  };
+  return {
+    ...withBrokerConnection,
+    operations: withBrokerConnection.operations ?? buildOperationsSnapshot(withBrokerConnection),
   };
 }
 

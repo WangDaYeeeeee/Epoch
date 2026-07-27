@@ -12,6 +12,16 @@ import { createCalculationRequest, PostgresCalculationRunRepository } from "./ca
 import { PostgresRiskDriftAnchorRepository } from "./risk-drift-anchor";
 import { persistMarketDataFreshness } from "./market-data-monitor";
 import { PostgresMarketRefreshRunRepository } from "./market-refresh-run";
+import { PostgresEventHorizonRepository } from "./event-horizon";
+import { PostgresAllocationJudgmentRepository } from "./allocation-judgment";
+import { FACTOR_NAMES, type FactorAssessmentItem } from "../domain/allocation-judgment";
+import { PostgresResearchEvidenceRepository } from "./research-evidence";
+import { PostgresDecisionJournalRepository } from "./decision-journal";
+import { PostgresRefillPlanRepository } from "./refill-plan";
+import { PostgresPositionGovernanceRepository } from "./position-governance";
+import { PostgresExceptionRecordRepository } from "./exception-record";
+import { PostgresThemeRepository } from "./theme";
+import { PostgresReviewRepository } from "./review";
 
 const databaseDescribe = process.env.DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 
@@ -44,7 +54,7 @@ databaseDescribe("Phase 0 PostgreSQL integration", () => {
 
   it("claims and records a due deterministic calculation job", async () => {
     await sql`UPDATE scheduled_job SET next_run_at = now() WHERE id = 'demo-ledger-recalculation'`;
-    expect(await runDueJobs(sql)).toEqual([{ id: "demo-ledger-recalculation", status: "succeeded" }]);
+    expect(await runDueJobs(sql)).toContainEqual({ id: "demo-ledger-recalculation", status: "succeeded" });
     const [run] = await sql<{ count: number }[]>`
       SELECT count(*)::int AS count FROM calculation_run
       WHERE calculation_type = 'demo-ledger' AND status = 'succeeded'
@@ -288,6 +298,541 @@ Cash Transactions,Data,USD,cash-${uniqueId},20260719,Deposits/Withdrawals,Deposi
         await sql`DELETE FROM risk_drift_anchor WHERE calculation_run_id = ${calculationId}`;
         await sql`DELETE FROM calculation_run WHERE id = ${calculationId}`;
       }
+    }
+  });
+
+  it("persists an event and clears its near-zone red flag only when the playbook is ready", async () => {
+    const repository = new PostgresEventHorizonRepository(sql);
+    const eventId = await repository.create({
+      title: `Integration earnings ${randomUUID()}`,
+      instrumentId: "US:GOOGL",
+      eventType: "earnings",
+      scheduledDate: "2026-07-31",
+      source: "integration",
+      observedAt: "2026-07-27T00:00:00Z",
+    });
+    try {
+      const missing = await repository.load("2026-07-27");
+      expect(missing.items.find((item) => item.id === eventId)).toMatchObject({
+        zone: "near",
+        playbookStatus: "missing",
+        needsPlaybook: true,
+      });
+      await repository.savePlaybook({
+        eventId,
+        status: "ready",
+        summary: "Base / upside / downside branches recorded.",
+        asOf: "2026-07-27",
+        branches: [
+          { scope: "instrument", scenario: "miss", trigger: "EPS misses", action: "Reduce", riskDirection: "decrease" },
+          { scope: "theme", scenario: "thesis invalidated", trigger: "Industry demand contracts", action: "Downgrade to QQQ", riskDirection: "decrease" },
+        ],
+      });
+      const ready = await repository.load("2026-07-27");
+      expect(ready.items.find((item) => item.id === eventId)).toMatchObject({
+        playbookStatus: "ready",
+        needsPlaybook: false,
+      });
+    } finally {
+      await sql`
+        DELETE FROM playbook_branch
+        WHERE revision_id IN (
+          SELECT revision.id FROM playbook_revision revision
+          JOIN event_playbook playbook ON playbook.id = revision.playbook_id
+          WHERE playbook.event_id = ${eventId}
+        )
+      `;
+      await sql`
+        DELETE FROM playbook_revision
+        WHERE playbook_id IN (SELECT id FROM event_playbook WHERE event_id = ${eventId})
+      `;
+      await sql`DELETE FROM event_playbook WHERE event_id = ${eventId}`;
+      await sql`DELETE FROM investment_event WHERE id = ${eventId}`;
+    }
+  });
+
+  it("versions playbook branches and records pre-plan exceptions for quarterly review", async () => {
+    const events = new PostgresEventHorizonRepository(sql);
+    const exceptions = new PostgresExceptionRecordRepository(sql);
+    const eventId = await events.create({
+      title: "Integration exceptional event",
+      instrumentId: "US:GOOGL",
+      eventType: "earnings",
+      scheduledDate: "2026-07-31",
+      source: "integration",
+      observedAt: "2026-07-27T00:00:00Z",
+    });
+    try {
+      const revisionId = await events.savePlaybook({
+        eventId,
+        status: "ready",
+        summary: "Versioned branch plan",
+        asOf: "2026-07-27",
+        branches: [
+          { scope: "instrument", scenario: "beat", trigger: "Guidance rises", action: "Hold", riskDirection: "neutral" },
+          { scope: "theme", scenario: "thesis invalidated", trigger: "Demand collapses", action: "Downgrade group to QQQ", riskDirection: "decrease" },
+        ],
+      });
+      const exceptionId = await exceptions.create({
+        eventId,
+        playbookRevisionId: revisionId,
+        uncoveredReason: "The event was not represented by any existing branch.",
+        logicChange: "The distribution model changed irreversibly.",
+        action: "Reduce after the cooling period.",
+        decidedAt: "2026-07-27T12:00:00Z",
+        executeAfter: "2026-07-28T12:00:00Z",
+      });
+      await exceptions.review(exceptionId, "absorbed");
+      const rows = await sql<{ review_status: string }[]>`
+        SELECT review_status FROM exception_record WHERE id = ${exceptionId}
+      `;
+      expect(rows[0].review_status).toBe("absorbed");
+    } finally {
+      await sql`DELETE FROM exception_record WHERE event_id = ${eventId}`;
+      await sql`
+        DELETE FROM playbook_branch
+        WHERE revision_id IN (
+          SELECT revision.id FROM playbook_revision revision
+          JOIN event_playbook playbook ON playbook.id = revision.playbook_id
+          WHERE playbook.event_id = ${eventId}
+        )
+      `;
+      await sql`
+        DELETE FROM playbook_revision
+        WHERE playbook_id IN (SELECT id FROM event_playbook WHERE event_id = ${eventId})
+      `;
+      await sql`DELETE FROM event_playbook WHERE event_id = ${eventId}`;
+      await sql`DELETE FROM investment_event WHERE id = ${eventId}`;
+    }
+  });
+
+  it("requires a confirmed six-factor assessment before confirming a weight tier", async () => {
+    const repository = new PostgresAllocationJudgmentRepository(sql);
+    const instrumentId = `TEST:${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+    const candidateId = await repository.createCandidate(instrumentId);
+    const items: FactorAssessmentItem[] = FACTOR_NAMES.map((factor) => ({
+      factor,
+      conclusion: "neutral",
+      confidence: 0.6,
+      evidence: `${factor} supporting evidence`,
+      counterEvidence: `${factor} counter evidence`,
+      direction: "stable",
+      impact: `${factor} affects the relative ranking`,
+    }));
+    try {
+      const draftAssessmentId = await repository.saveAssessment(candidateId, {
+        asOf: "2026-07-27",
+        summary: "Integration draft",
+        rankingReason: "Integration ranking reason",
+        items,
+      }, false);
+      await expect(repository.saveWeightTier({
+        candidateId,
+        factorAssessmentId: draftAssessmentId,
+        tier: {
+          asOf: "2026-07-27",
+          weightPercent: 25,
+          earningsExpectation: "If earnings reach the stated anchor, expected upside is measurable.",
+          primaryRisk: "Demand could weaken.",
+          invalidationCondition: "Two consecutive quarters of order contraction.",
+          whyThisTier: "Above standard positions but below the core holding.",
+        },
+        confirmed: true,
+      })).rejects.toThrow("confirmed factor assessment");
+
+      const confirmedAssessmentId = await repository.saveAssessment(candidateId, {
+        asOf: "2026-07-27",
+        summary: "Integration confirmed assessment",
+        rankingReason: "Integration confirmed ranking reason",
+        items,
+      }, true);
+      await repository.saveWeightTier({
+        candidateId,
+        factorAssessmentId: confirmedAssessmentId,
+        tier: {
+          asOf: "2026-07-27",
+          weightPercent: 25,
+          earningsExpectation: "If earnings reach the stated anchor, expected upside is measurable.",
+          primaryRisk: "Demand could weaken.",
+          invalidationCondition: "Two consecutive quarters of order contraction.",
+          whyThisTier: "Above standard positions but below the core holding.",
+        },
+        confirmed: true,
+      });
+      await expect(repository.loadCandidate(candidateId)).resolves.toMatchObject({
+        instrument_id: instrumentId,
+        assessment_status: "confirmed",
+        weight_percent: 25,
+        weight_tier_status: "confirmed",
+      });
+    } finally {
+      await sql`DELETE FROM weight_tier WHERE candidate_id = ${candidateId}`;
+      await sql`
+        DELETE FROM factor_assessment_item
+        WHERE assessment_id IN (SELECT id FROM factor_assessment WHERE candidate_id = ${candidateId})
+      `;
+      await sql`DELETE FROM factor_assessment WHERE candidate_id = ${candidateId}`;
+      await sql`DELETE FROM investment_candidate WHERE id = ${candidateId}`;
+    }
+  });
+
+  it("preserves evidence roles from a claim through its factor assessment", async () => {
+    const allocation = new PostgresAllocationJudgmentRepository(sql);
+    const research = new PostgresResearchEvidenceRepository(sql);
+    const instrumentId = `TEST:${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+    const candidateId = await allocation.createCandidate(instrumentId);
+    const evidenceIds: string[] = [];
+    try {
+      const supportId = await research.saveEvidence({
+        title: "Integration primary filing",
+        sourceType: "primary",
+        sourceName: `integration-${randomUUID()}`,
+        sourceUrl: "https://example.com/filing",
+        observedAt: "2026-07-27T00:00:00Z",
+        effectiveDate: "2026-07-26",
+        excerpt: "Orders increased.",
+        contentHash: randomUUID().replaceAll("-", "").padEnd(64, "0"),
+      });
+      evidenceIds.push(supportId);
+      const counterId = await research.saveEvidence({
+        title: "Integration counter evidence",
+        sourceType: "secondary",
+        sourceName: `integration-${randomUUID()}`,
+        sourceUrl: "https://example.com/counter",
+        observedAt: "2026-07-27T01:00:00Z",
+        effectiveDate: "2026-07-26",
+        excerpt: "Lead times declined.",
+        contentHash: randomUUID().replaceAll("-", "").padEnd(64, "1"),
+      });
+      evidenceIds.push(counterId);
+      const claimId = await research.saveClaim(candidateId, {
+        kind: "inference",
+        statement: "Demand remains durable.",
+        reasoning: "Order growth currently outweighs the lead-time counter-signal.",
+        confidence: 0.7,
+        asOf: "2026-07-27",
+        supportingEvidenceIds: [supportId],
+        counterEvidenceIds: [counterId],
+      });
+      const assessmentId = await allocation.saveAssessment(candidateId, {
+        asOf: "2026-07-27",
+        summary: "Evidence-linked assessment",
+        rankingReason: "Evidence-linked ranking",
+        items: FACTOR_NAMES.map((factor) => ({
+          factor, conclusion: "neutral", confidence: 0.6, evidence: "See linked claim",
+          counterEvidence: "See linked counter evidence", direction: "stable", impact: "Neutral impact",
+        })),
+      }, true);
+      await research.linkAssessment({ assessmentId, claimId, role: "support" });
+      await expect(research.loadClaims(candidateId)).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: claimId, evidence_id: supportId, evidence_role: "support" }),
+        expect.objectContaining({ id: claimId, evidence_id: counterId, evidence_role: "counter" }),
+      ]));
+    } finally {
+      await sql`
+        DELETE FROM factor_assessment_claim
+        WHERE assessment_id IN (SELECT id FROM factor_assessment WHERE candidate_id = ${candidateId})
+      `;
+      await sql`
+        DELETE FROM factor_assessment_item
+        WHERE assessment_id IN (SELECT id FROM factor_assessment WHERE candidate_id = ${candidateId})
+      `;
+      await sql`DELETE FROM factor_assessment WHERE candidate_id = ${candidateId}`;
+      await sql`
+        DELETE FROM claim_evidence
+        WHERE claim_id IN (SELECT id FROM research_claim WHERE candidate_id = ${candidateId})
+      `;
+      await sql`DELETE FROM research_claim WHERE candidate_id = ${candidateId}`;
+      await sql`DELETE FROM investment_candidate WHERE id = ${candidateId}`;
+      if (evidenceIds.length) await sql`DELETE FROM research_evidence WHERE id = ANY(${evidenceIds})`;
+    }
+  });
+
+  it("keeps Policy Gate, owner decision and external execution as separate journal records", async () => {
+    const repository = new PostgresDecisionJournalRepository(sql);
+    const refills = new PostgresRefillPlanRepository(sql);
+    const passingRunId = randomUUID();
+    const failedRunId = randomUUID();
+    await sql`
+      INSERT INTO calculation_run (
+        id, calculation_type, as_of, input_hash, code_version, status, input_payload, output, finished_at
+      ) VALUES
+        (
+          ${passingRunId}, 'portfolio-risk-rebalance', '2026-07-27T00:00:00Z',
+          ${randomUUID().replaceAll("-", "").padEnd(64, "a")}, ${randomUUID()}, 'degraded',
+          ${sql.json({ targetWeights: [{ instrumentId: "US:GOOGL", weight: 0.25 }] })},
+          ${sql.json({ policyGate: { passed: true } })}, now()
+        ),
+        (
+          ${failedRunId}, 'portfolio-risk-rebalance', '2026-07-27T01:00:00Z',
+          ${randomUUID().replaceAll("-", "").padEnd(64, "b")}, ${randomUUID()}, 'degraded',
+          ${sql.json({ targetWeights: [{ instrumentId: "US:GOOGL", weight: 1 }] })},
+          ${sql.json({ policyGate: { passed: false } })}, now()
+        )
+    `;
+    const decisionIds: string[] = [];
+    let refillPlanId: string | undefined;
+    try {
+      await expect(repository.decide({
+        calculationRunId: failedRunId,
+        triggerType: "risk",
+        outcome: "confirmed",
+        rationale: "Should not be accepted",
+        monitoringNotes: "",
+        decidedAt: "2026-07-27T02:00:00Z",
+      })).rejects.toThrow("can only be rejected");
+      decisionIds.push(await repository.decide({
+        calculationRunId: failedRunId,
+        triggerType: "risk",
+        outcome: "rejected",
+        rationale: "Policy Gate failed",
+        monitoringNotes: "Prepare a lower-risk intent",
+        decidedAt: "2026-07-27T02:01:00Z",
+      }));
+      const confirmedId = await repository.decide({
+        calculationRunId: passingRunId,
+        triggerType: "risk",
+        outcome: "confirmed",
+        rationale: "Approved after independent Policy Gate",
+        monitoringNotes: "Watch the next earnings event",
+        decidedAt: "2026-07-27T02:02:00Z",
+      });
+      decisionIds.push(confirmedId);
+      const executionId = await repository.recordExecution({
+        decisionId: confirmedId,
+        executedAt: "2026-07-27T03:00:00Z",
+        brokerReference: "integration-manual-execution",
+        actualWeights: [{ instrumentId: "US:GOOGL", weight: 0.24 }],
+        note: "Executed manually outside Epoch",
+      });
+      refillPlanId = await refills.create(confirmedId);
+      await expect(refills.evaluate({
+        planId: refillPlanId,
+        batchNumber: 1,
+        evaluation: {
+          consecutiveGatePassTradingDays: 1,
+          originalRiskSignalCleared: false,
+          factorInvalidationTriggered: false,
+          projectedPolicyGatePassed: true,
+          currentTargetConfirmed: true,
+        },
+        targetWeights: [{ instrumentId: "US:GOOGL", weight: 0.25 }],
+        calculationRunId: passingRunId,
+      })).resolves.toMatchObject({ state: "eligible", mandatory: false });
+      await refills.transition({ planId: refillPlanId, batchNumber: 1, to: "executed", reason: "Executed externally" });
+      await expect(refills.evaluate({
+        planId: refillPlanId,
+        batchNumber: 2,
+        evaluation: {
+          consecutiveGatePassTradingDays: 5,
+          originalRiskSignalCleared: true,
+          factorInvalidationTriggered: false,
+          projectedPolicyGatePassed: true,
+          currentTargetConfirmed: true,
+        },
+        targetWeights: [{ instrumentId: "US:GOOGL", weight: 0.25 }],
+        calculationRunId: passingRunId,
+      })).resolves.toMatchObject({ state: "eligible", mandatory: false });
+      await expect(refills.load(refillPlanId)).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ batchNumber: 1, state: "executed" }),
+        expect.objectContaining({ batchNumber: 2, state: "eligible" }),
+        expect.objectContaining({ batchNumber: 3, state: "pending" }),
+      ]));
+      await expect(repository.load()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: confirmedId,
+          rebalanceRecord: expect.objectContaining({
+            trigger_type: "risk",
+            strategy_version_id: "epoch-satellite-v0.1.0",
+            parameter_set_id: "default-draft-v0.1.0",
+          }),
+          execution: expect.objectContaining({
+            id: executionId,
+            brokerReference: "integration-manual-execution",
+          }),
+        }),
+        expect.objectContaining({ calculationRunId: failedRunId, outcome: "rejected", execution: null }),
+      ]));
+    } finally {
+      if (refillPlanId) {
+        await sql`
+          DELETE FROM refill_batch_transition
+          WHERE batch_id IN (SELECT id FROM refill_batch WHERE plan_id = ${refillPlanId})
+        `;
+        await sql`DELETE FROM refill_batch WHERE plan_id = ${refillPlanId}`;
+        await sql`DELETE FROM refill_plan WHERE id = ${refillPlanId}`;
+      }
+      if (decisionIds.length) {
+        await sql`DELETE FROM execution_record WHERE decision_id = ANY(${decisionIds})`;
+        await sql`DELETE FROM rebalance_record WHERE decision_id = ANY(${decisionIds})`;
+        await sql`DELETE FROM investment_decision WHERE id = ANY(${decisionIds})`;
+      }
+      await sql`DELETE FROM calculation_run WHERE id IN (${passingRunId}, ${failedRunId})`;
+    }
+  });
+
+  it("records catalysts and invalidation while exempting risk reductions from the 90-day restriction", async () => {
+    const allocation = new PostgresAllocationJudgmentRepository(sql);
+    const governance = new PostgresPositionGovernanceRepository(sql);
+    const instrumentId = `TEST:${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+    const candidateId = await allocation.createCandidate(instrumentId);
+    try {
+      await governance.saveCatalyst(candidateId, {
+        title: "Integration catalyst",
+        expectedDate: "2026-08-01",
+        validThrough: "2026-08-08",
+        status: "planned",
+        observableOutcome: "Guidance exceeds the explicit threshold",
+      });
+      await governance.saveInvalidation(candidateId, {
+        statement: "Demand thesis fails",
+        observableMetric: "Quarterly order growth",
+        trigger: "Negative growth for two consecutive quarters",
+      });
+      await expect(governance.recordExit({
+        candidateId, exitType: "risk_reduction", exitDate: "2026-07-27",
+      })).resolves.toBeNull();
+      await expect(governance.recordExit({
+        candidateId, exitType: "active_exit", exitDate: "2026-07-27",
+      })).resolves.toEqual(expect.any(String));
+      await expect(governance.load(candidateId, "2026-07-27")).resolves.toMatchObject({
+        catalysts: [expect.objectContaining({ status: "planned" })],
+        invalidations: [expect.objectContaining({ status: "active" })],
+        restrictions: [expect.objectContaining({ restricted_until: "2026-10-25" })],
+      });
+    } finally {
+      await sql`DELETE FROM exit_restriction WHERE candidate_id = ${candidateId}`;
+      await sql`DELETE FROM invalidation_condition WHERE candidate_id = ${candidateId}`;
+      await sql`DELETE FROM candidate_catalyst WHERE candidate_id = ${candidateId}`;
+      await sql`DELETE FROM investment_candidate WHERE id = ${candidateId}`;
+    }
+  });
+
+  it("versions an investment theme and links its candidate and evidence", async () => {
+    const themes = new PostgresThemeRepository(sql);
+    const allocation = new PostgresAllocationJudgmentRepository(sql);
+    const research = new PostgresResearchEvidenceRepository(sql);
+    const marker = randomUUID();
+    const instrumentId = `TEST:${marker.replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+    const candidateId = await allocation.createCandidate(instrumentId);
+    const evidenceId = await research.saveEvidence({
+      title: "Integration theme evidence",
+      sourceType: "primary",
+      sourceName: `integration-theme-${marker}`,
+      sourceUrl: "https://example.com/theme-evidence",
+      observedAt: "2026-07-27T00:00:00Z",
+      effectiveDate: "2026-07-26",
+      excerpt: "Deployment demand crossed the stated threshold.",
+      contentHash: marker.replaceAll("-", "").padEnd(64, "e"),
+    });
+    let themeId: string | undefined;
+    try {
+      themeId = await themes.create(`Integration theme ${marker}`);
+      const versionId = await themes.saveVersion(themeId, {
+        asOf: "2026-07-27",
+        phase: "deployment",
+        thesis: "Infrastructure investment is moving from installation to deployment.",
+        profitPath: "Utilization growth expands recurring revenue and operating leverage.",
+        invalidationCondition: "Utilization remains below the declared threshold for two quarters.",
+        confirmed: true,
+      });
+      await themes.linkCandidate(themeId, candidateId, "primary beneficiary");
+      await themes.linkEvidence(versionId, evidenceId, "support");
+
+      await expect(themes.load()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: themeId,
+          version_id: versionId,
+          phase: "deployment",
+          version_status: "confirmed",
+          candidate_count: 1,
+        }),
+      ]));
+      const links = await sql<{ candidate_count: number; evidence_count: number }[]>`
+        SELECT
+          (SELECT count(*)::int FROM theme_candidate WHERE theme_id = ${themeId}) AS candidate_count,
+          (SELECT count(*)::int FROM theme_version_evidence WHERE theme_version_id = ${versionId}) AS evidence_count
+      `;
+      expect(links[0]).toEqual({ candidate_count: 1, evidence_count: 1 });
+    } finally {
+      if (themeId) {
+        await sql`
+          DELETE FROM theme_version_evidence
+          WHERE theme_version_id IN (SELECT id FROM theme_version WHERE theme_id = ${themeId})
+        `;
+        await sql`DELETE FROM theme_candidate WHERE theme_id = ${themeId}`;
+        await sql`DELETE FROM theme_version WHERE theme_id = ${themeId}`;
+        await sql`DELETE FROM investment_theme WHERE id = ${themeId}`;
+      }
+      await sql`DELETE FROM research_evidence WHERE id = ${evidenceId}`;
+      await sql`DELETE FROM investment_candidate WHERE id = ${candidateId}`;
+    }
+  });
+
+  it("records each review cadence and limits exception absorption to confirmed quarterly reviews", async () => {
+    const reviews = new PostgresReviewRepository(sql);
+    const eventId = randomUUID();
+    const exceptionId = randomUUID();
+    const reviewIds: string[] = [];
+    try {
+      await sql`
+        INSERT INTO investment_event (
+          id, title, event_type, scheduled_date, source, observed_at
+        ) VALUES (
+          ${eventId}, 'Integration review event', 'other', '2026-07-27',
+          'integration', '2026-07-27T00:00:00Z'
+        )
+      `;
+      await sql`
+        INSERT INTO exception_record (
+          id, event_id, uncovered_reason, logic_change, action, decided_at, execute_after
+        ) VALUES (
+          ${exceptionId}, ${eventId}, 'Unexpected fact', 'Changed decision logic',
+          'Hold pending confirmation', '2026-07-27T01:00:00Z', '2026-07-28T01:00:00Z'
+        )
+      `;
+      const base = {
+        scope: "portfolio" as const,
+        asOf: "2026-07-27",
+        strategyVersion: "epoch-satellite-v0.1.0",
+        parameterSetVersion: "default-draft-v0.1.0",
+        summary: "Integration review",
+        whatWorked: "The deterministic gate worked.",
+        whatFailed: "The playbook missed a branch.",
+        followUp: "Add the missing branch.",
+        confirmed: true,
+      };
+      for (const cadence of ["daily", "weekly", "monthly", "quarterly", "post_exit"] as const) {
+        reviewIds.push(await reviews.create({ ...base, cadence }));
+      }
+      await expect(reviews.absorb({
+        reviewId: reviewIds[1],
+        sourceType: "exception",
+        sourceId: exceptionId,
+        disposition: "absorbed",
+        rationale: "Weekly reviews cannot absorb policy learning.",
+      })).rejects.toThrow("quarterly");
+      await reviews.absorb({
+        reviewId: reviewIds[3],
+        sourceType: "exception",
+        sourceId: exceptionId,
+        disposition: "absorbed",
+        rationale: "The missing branch is incorporated into the next playbook revision.",
+      });
+      await expect(reviews.load()).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: reviewIds[3], cadence: "quarterly", absorption_count: 1 }),
+      ]));
+      const [exception] = await sql<{ review_status: string }[]>`
+        SELECT review_status FROM exception_record WHERE id = ${exceptionId}
+      `;
+      expect(exception.review_status).toBe("absorbed");
+    } finally {
+      if (reviewIds.length) {
+        await sql`DELETE FROM review_absorption WHERE review_id = ANY(${reviewIds})`;
+        await sql`DELETE FROM investment_review WHERE id = ANY(${reviewIds})`;
+      }
+      await sql`DELETE FROM exception_record WHERE id = ${exceptionId}`;
+      await sql`DELETE FROM investment_event WHERE id = ${eventId}`;
     }
   });
 });
