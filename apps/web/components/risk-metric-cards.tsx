@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Area, AreaChart, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { RiskDriftCard, type NamedRiskDriftInstrument } from "@/components/risk-drift-card";
 import { TimeRangeScrubber } from "@/components/time-range-scrubber";
@@ -178,7 +179,7 @@ export function RiskMetricCards({
       })}
       <RiskDriftCard drift={drift} instruments={driftInstruments} />
     </div>
-    {selectedDefinition && (
+    {selectedDefinition && createPortal((
       <div
         className="risk-detail-backdrop"
         role="presentation"
@@ -221,7 +222,15 @@ export function RiskMetricCards({
                 <YAxis yAxisId="portfolio" domain={["auto", "auto"]} tickFormatter={(value) => `${Number(value) >= 0 ? "+" : ""}${(Number(value) * 100).toFixed(1)}%`} tick={{ fontSize: 9, fill: "#7662ee" }} tickLine={false} axisLine={false} width={48} />
                 <YAxis yAxisId="risk" orientation="right" domain={["auto", "auto"]} tickFormatter={(value) => `${(Number(value) * 100).toFixed(1)}%`} tick={{ fontSize: 9, fill: selectedColor }} tickLine={false} axisLine={false} width={48} />
                 <Tooltip
-                  contentStyle={{ background: "#15103a", border: "1px solid #2b2460", borderRadius: 8, padding: "7px 9px", fontSize: 9 }}
+                  contentStyle={{
+                    background: "rgba(15,10,40,.9)",
+                    border: "1px solid rgba(207,199,255,.16)",
+                    borderRadius: 10,
+                    boxShadow: "0 14px 34px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.06)",
+                    backdropFilter: "blur(18px) saturate(115%)",
+                    padding: "8px 10px",
+                    fontSize: 9,
+                  }}
                   formatter={(value, name) => [
                     `${Number(value) >= 0 && name === "组合净值区间表现" ? "+" : ""}${formatPercent(Number(value))}`,
                     name,
@@ -275,6 +284,6 @@ export function RiskMetricCards({
           <p className="risk-detail-note">每个风险点均来自当日真实持仓；组合净值按当前所选窗口起点重新归一化。</p>
         </section>
       </div>
-    )}
+    ), document.body)}
   </>;
 }

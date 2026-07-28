@@ -320,3 +320,329 @@ button.risk-metric-card.tone-red:hover { border-color: rgba(240,122,137,.78); ba
 .review-badge { display: inline-block!important; padding: 5px 8px; border-radius: 100px; white-space: nowrap; }
 @media (max-width: 900px) { .reconciliation-summary,.risk-metrics,.risk-actions,.risk-monitor-grid { grid-template-columns: 1fr 1fr; } .exposure-grid { grid-template-columns: 1fr; } .risk-row,.risk-scenario,.risk-history-row { grid-template-columns: 1fr 1fr; } .risk-row span,.risk-scenario span,.risk-history-row strong { text-align: left; } }
 @media (max-width: 700px) { .risk-actions,.rebalance-fields,.anchor-weight-grid { grid-template-columns: 1fr; } }
+
+/* Glass data surfaces: charts, range selectors, meters, and modal layers. */
+.risk-detail-backdrop,
+.anchor-modal-backdrop {
+  padding: 28px;
+  background: rgba(2,1,10,.2);
+  backdrop-filter: blur(20px) saturate(78%) brightness(.72);
+  -webkit-backdrop-filter: blur(20px) saturate(78%) brightness(.72);
+}
+
+.risk-detail-modal,
+.anchor-modal {
+  position: relative;
+  isolation: isolate;
+  overflow-x: hidden;
+  border: 1px solid rgba(220,216,255,.12);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.035), transparent 30%),
+    rgba(13,9,34,.74);
+  box-shadow:
+    0 28px 80px rgba(0,0,0,.42),
+    inset 0 1px 0 rgba(255,255,255,.055);
+  backdrop-filter: blur(26px) saturate(112%);
+  -webkit-backdrop-filter: blur(26px) saturate(112%);
+}
+
+.risk-detail-modal::before {
+  display: none;
+}
+
+.risk-detail-modal::after {
+  display: none;
+}
+
+.risk-detail-modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.risk-detail-modal::-webkit-scrollbar-track {
+  background: rgba(5,3,22,.24);
+}
+
+.risk-detail-modal::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 100px;
+  background: rgba(169,155,255,.28);
+  background-clip: padding-box;
+}
+
+.risk-detail-head > button {
+  border: 1px solid rgba(169,155,255,.18);
+  background: rgba(118,98,238,.065);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.055), 0 6px 16px rgba(2,1,12,.2);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.risk-detail-chart {
+  position: relative;
+  isolation: isolate;
+  padding: 12px 10px 4px;
+  overflow: hidden;
+  border: 1px solid rgba(207,199,255,.105);
+  border-radius: 14px;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.025), transparent 36%),
+    rgba(5,3,22,.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.04),
+    0 12px 32px rgba(1,0,10,.16);
+  backdrop-filter: blur(12px) saturate(110%);
+  -webkit-backdrop-filter: blur(12px) saturate(110%);
+}
+
+.risk-detail-chart::before {
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  right: 8%;
+  left: 8%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.09), transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.risk-detail-chart .recharts-cartesian-grid line {
+  stroke: rgba(207,199,255,.1);
+}
+
+.risk-detail-chart .recharts-line-curve,
+.risk-detail-chart .recharts-area-curve {
+  filter: drop-shadow(0 0 3px rgba(169,155,255,.12));
+}
+
+.scrubber-handle {
+  width: 17px;
+  height: 17px;
+  border: 1px solid rgba(238,235,255,.72);
+  background: color-mix(in srgb,var(--scrubber-accent,#7662ee) 48%,rgba(243,241,251,.48));
+  box-shadow:
+    inset 0 0 3px rgba(255,255,255,.28),
+    0 0 0 2px color-mix(in srgb,var(--scrubber-accent,#7662ee) 34%,rgba(255,255,255,.18)),
+    0 3px 10px rgba(1,0,10,.4);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+}
+
+.scrubber-handle:hover {
+  box-shadow:
+    inset 0 0 3px rgba(255,255,255,.34),
+    0 0 0 3px color-mix(in srgb,var(--scrubber-accent,#7662ee) 38%,rgba(255,255,255,.2)),
+    0 4px 12px rgba(1,0,10,.44);
+}
+
+/* Glass controls: keep semantic colors while sharing the as-of pill material. */
+.operations-status,
+.reconciliation-status,
+.status,
+.review-badge {
+  --control-accent: #a99bff;
+  border-style: solid;
+  border-width: 1px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.12),
+    0 7px 18px rgba(1,0,10,.18);
+  backdrop-filter: blur(12px) saturate(116%);
+  -webkit-backdrop-filter: blur(12px) saturate(116%);
+}
+
+.operations-status.clear,
+.reconciliation-status.passed,
+.status:not(.warning) {
+  --control-accent: #5bc59b;
+}
+
+.operations-status.attention,
+.reconciliation-status.pending,
+.review-badge,
+.status.warning {
+  --control-accent: #e0bd72;
+}
+
+.operations-status.critical {
+  --control-accent: #f07a89;
+}
+
+.operations-status.clear,
+.operations-status.attention,
+.operations-status.critical,
+.reconciliation-status.passed,
+.reconciliation-status.pending,
+.review-badge,
+.status,
+.status.warning {
+  border-color: color-mix(in srgb,var(--control-accent) 40%,rgba(255,255,255,.18));
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.075), transparent 44%),
+    color-mix(in srgb,var(--control-accent) 12%,rgba(9,6,26,.5));
+}
+
+.range-controls button,
+.risk-history-controls select,
+.risk-history-controls button,
+.risk-anchor-entry > button,
+.risk-detail-tabs,
+.risk-sort-control select {
+  --control-accent: #7662ee;
+  border-color: color-mix(in srgb,var(--control-accent) 40%,rgba(255,255,255,.18));
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.08), transparent 45%),
+    color-mix(in srgb,var(--control-accent) 12%,rgba(9,6,26,.48));
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.12),
+    0 8px 20px rgba(1,0,10,.18);
+  backdrop-filter: blur(13px) saturate(116%);
+  -webkit-backdrop-filter: blur(13px) saturate(116%);
+}
+
+.risk-history-controls select,
+.risk-history-controls button {
+  --control-accent: #5bc59b;
+}
+
+.risk-anchor-entry.mismatch > button {
+  --control-accent: #e0bd72;
+  border-color: color-mix(in srgb,var(--control-accent) 40%,rgba(255,255,255,.18));
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.08), transparent 45%),
+    color-mix(in srgb,var(--control-accent) 12%,rgba(9,6,26,.48));
+}
+
+.range-controls button:hover,
+.risk-history-controls button:hover,
+.risk-anchor-entry > button:hover {
+  border-color: color-mix(in srgb,var(--control-accent) 52%,rgba(255,255,255,.2));
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.095), transparent 45%),
+    color-mix(in srgb,var(--control-accent) 16%,rgba(9,6,26,.5));
+}
+
+.risk-metric-card {
+  --card-accent: #7662ee;
+}
+
+.risk-metric-card.tone-green {
+  --card-accent: #5bc59b;
+}
+
+.risk-metric-card.tone-yellow {
+  --card-accent: #e0bd72;
+}
+
+.risk-metric-card.tone-red {
+  --card-accent: #f07a89;
+}
+
+:is(
+  .risk-metric-card,
+  .risk-metric-card.tone-green,
+  .risk-metric-card.tone-yellow,
+  .risk-metric-card.tone-red
+) {
+  border-color: color-mix(in srgb,var(--card-accent) 38%,rgba(255,255,255,.15));
+  background:
+    radial-gradient(
+      215% 175% at 0% 0%,
+      color-mix(in srgb,var(--card-accent) 7%,transparent),
+      transparent 78%
+    ),
+    linear-gradient(145deg, rgba(255,255,255,.06), transparent 36%),
+    linear-gradient(
+      115deg,
+      color-mix(in srgb,var(--card-accent) 4%,rgba(13,9,40,.58)),
+      rgba(8,5,28,.56) 74%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.09),
+    0 16px 38px rgba(1,0,10,.22);
+  backdrop-filter: blur(17px) saturate(112%);
+  -webkit-backdrop-filter: blur(17px) saturate(112%);
+}
+
+.risk-metric-card::before {
+  position: absolute;
+  top: 0;
+  right: 9%;
+  left: 9%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent);
+  content: "";
+  pointer-events: none;
+}
+
+button:is(
+  .risk-metric-card,
+  .risk-metric-card.tone-green,
+  .risk-metric-card.tone-yellow,
+  .risk-metric-card.tone-red
+):hover {
+  border-color: color-mix(in srgb,var(--card-accent) 48%,rgba(255,255,255,.18));
+  background:
+    radial-gradient(
+      215% 175% at 0% 0%,
+      color-mix(in srgb,var(--card-accent) 9%,transparent),
+      transparent 78%
+    ),
+    linear-gradient(145deg, rgba(255,255,255,.075), transparent 36%),
+    linear-gradient(
+      115deg,
+      color-mix(in srgb,var(--card-accent) 5%,rgba(13,9,40,.6)),
+      rgba(8,5,28,.58) 74%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.11),
+    0 18px 42px rgba(1,0,10,.25);
+}
+
+.risk-value-meter,
+.shar-pair > div {
+  gap: 7px;
+}
+
+.risk-value-meter i,
+.shar-pair i {
+  position: relative;
+  height: 7px;
+  border: 0;
+  background: rgba(118,98,238,.045);
+  box-shadow: inset 0 0 2px rgba(1,0,10,.2);
+}
+
+.risk-value-meter i::after,
+.shar-pair i::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  height: auto;
+  min-width: 4px;
+  border: 1px solid color-mix(in srgb,var(--meter-color) 48%,rgba(255,255,255,.3));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb,var(--meter-color) 52%,transparent),
+    color-mix(in srgb,var(--meter-color) 62%,transparent)
+  );
+  box-shadow:
+    inset 0 0 2px rgba(255,255,255,.2),
+    0 0 6px color-mix(in srgb,var(--meter-color) 11%,transparent);
+  opacity: 1;
+}
+
+.shar-pair i {
+  grid-column: 1/-1;
+  height: 6px;
+}
+
+@media (max-width: 700px) {
+  .risk-detail-backdrop {
+    padding: 12px;
+  }
+
+  .risk-detail-modal {
+    max-height: calc(100vh - 24px);
+  }
+}

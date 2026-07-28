@@ -66,19 +66,22 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
   return (
     <main className={`dashboard dashboard-${view}`}>
       <aside>
-        <div className="brand">EPOCH</div>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">E</span>
+          <span className="brand-copy"><b>EPOCH</b><small>INVESTMENT CONTROL</small></span>
+        </div>
         <nav>
-          <a className={view === "workbench" ? "active" : ""} href="/">工作台</a>
-          <a className={view === "portfolio" ? "active" : ""} href="/portfolio">组合</a>
-          <a className={view === "research" ? "active" : ""} href="/research">研究</a>
-          <a className={view === "system" ? "active" : ""} href="/system">系统</a>
+          <a className={view === "workbench" ? "active" : ""} href="/"><i aria-hidden="true">⌂</i><span>工作台</span></a>
+          <a className={view === "portfolio" ? "active" : ""} href="/portfolio"><i aria-hidden="true">◫</i><span>组合</span></a>
+          <a className={view === "research" ? "active" : ""} href="/research"><i aria-hidden="true">⌕</i><span>研究</span></a>
+          <a className={view === "system" ? "active" : ""} href="/system"><i aria-hidden="true">◇</i><span>系统</span></a>
         </nav>
         <div className="account"><span>卫星仓账户边界</span><strong>{data.meta.account}</strong><small>只读 · {data.meta.baseCurrency}</small></div>
       </aside>
       <section className="content">
         <header>
           <div><p className="eyebrow">{page.eyebrow}</p><h1>{page.title}</h1><p>{page.description}</p></div>
-          <div className="asof"><span className="pulse" />数据截至 {data.meta.asOf}</div>
+          <div className="asof"><span className="pulse" /><span className="asof-label">数据截至 {data.meta.asOf}</span></div>
         </header>
         {data.operations && (
           <article className="panel operations-panel view-section view-workbench" id="operations">

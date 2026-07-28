@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 type Weight = { instrumentId: string; name: string; weight: number };
 
@@ -107,7 +108,7 @@ export function TargetWeightAnchorForm({
       </div>
       <button type="button" onClick={() => setOpen(true)}>{anchorMismatch ? "重新设置基准" : "调整基准仓位"}</button>
     </section>
-    {open && (
+    {open && createPortal((
       <div
         className="anchor-modal-backdrop"
         role="presentation"
@@ -164,7 +165,7 @@ export function TargetWeightAnchorForm({
           {state.message && <p className={`risk-action-message ${state.tone}`}>{state.message}</p>}
         </form>
       </div>
-    )}
+    ), document.body)}
   </>;
 }
 

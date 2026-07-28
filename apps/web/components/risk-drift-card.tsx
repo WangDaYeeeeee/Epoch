@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { RiskDriftSnapshot } from "@/lib/domain/risk-drift";
 
 export type NamedRiskDriftInstrument = RiskDriftSnapshot["instruments"][number] & { name: string };
@@ -63,7 +64,7 @@ export function RiskDriftCard({
         <b>{drift.divergence.riskContribution == null ? "—" : percent(drift.divergence.riskContribution)}</b>
       </div>
     </button>
-    {open && (
+    {open && createPortal((
       <div
         className="risk-detail-backdrop"
         role="presentation"
@@ -113,6 +114,6 @@ export function RiskDriftCard({
           </p>
         </section>
       </div>
-    )}
+    ), document.body)}
   </>;
 }
