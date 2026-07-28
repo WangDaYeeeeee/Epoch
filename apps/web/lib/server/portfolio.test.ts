@@ -29,12 +29,13 @@ describe("staged satellite portfolio", () => {
       missingInstrumentIds: [],
     });
     expect(payload.health.marketDataFreshness).toMatchObject({
-      status: "fresh",
+      status: "stale",
       latestEffectiveDate: "2026-07-23",
+      expectedThroughDate: "2026-07-27",
       observationTimestampQuality: "authoritative",
     });
-    expect(payload.health.marketDataFreshness?.tradingDayLag).toBe(1);
-    expect(payload.health.status).toBe("healthy");
+    expect(payload.health.marketDataFreshness?.tradingDayLag).toBe(2);
+    expect(payload.health.status).toBe("warning");
     expect(payload.health.marketBarCoverage).toMatchObject({
       requiredInstruments: 5,
       coveredInstruments: 5,

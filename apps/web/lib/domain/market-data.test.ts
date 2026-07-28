@@ -62,7 +62,7 @@ describe("market data requirements", () => {
       tradingDayLag: 3,
       observedAt: "2026-07-22T09:28:59.000Z",
       observationTimestampQuality: "filesystem_fallback",
-      reason: "Latest common market date trails the expected cutoff by 3 trading days.",
+      reason: "最新共同行情日期较预期截止日滞后 3 个交易日。",
     });
   });
 

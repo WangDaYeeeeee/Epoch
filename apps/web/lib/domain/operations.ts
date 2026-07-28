@@ -20,6 +20,7 @@ export type OperationsSnapshot = {
 };
 
 const priorityRank: Record<OperationPriority, number> = { critical: 0, action: 1, review: 2 };
+const marketFreshnessAlertSources = new Set(["market_data:normalized", "market-data-freshness-monitor"]);
 
 export function mergeOperationItems(snapshot: OperationsSnapshot, additional: OperationItem[]): OperationsSnapshot {
   const byId = new Map([...snapshot.items, ...additional].map((item) => [item.id, item]));
@@ -47,19 +48,22 @@ export function buildOperationsSnapshot(
   const alerts = payload.health.operationalAlerts ?? [];
 
   for (const alert of alerts) {
+    const isMarketFreshnessAlert = marketFreshnessAlertSources.has(alert.source);
     items.push({
       id: `alert:${alert.id}`,
       priority: alert.severity === "error" ? "critical" : "action",
       category: alert.source.includes("risk") ? "risk" : "data",
-      title: alert.title,
-      detail: alert.detail,
+      title: isMarketFreshnessAlert ? "行情需要刷新" : alert.title,
+      detail: isMarketFreshnessAlert
+        ? payload.health.marketDataFreshness?.reason ?? alert.detail
+        : alert.detail,
       evidence: `${alert.occurrenceCount} 次 · 最近 ${alert.lastObservedAt.slice(0, 16).replace("T", " ")}`,
     });
   }
 
   const freshness = payload.health.marketDataFreshness;
   if (freshness && freshness.status !== "fresh"
-    && !alerts.some((alert) => alert.source === "market-data-freshness-monitor")) {
+    && !alerts.some((alert) => marketFreshnessAlertSources.has(alert.source))) {
     items.push({
       id: "market-data-freshness",
       priority: freshness.status === "missing" ? "critical" : "action",

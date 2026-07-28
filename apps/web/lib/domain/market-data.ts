@@ -106,7 +106,7 @@ export function evaluateMarketDataFreshness(input: {
       tradingDayLag: input.tradingDayLag,
       observedAt: input.observedAt ?? null,
       observationTimestampQuality,
-      reason: "No common effective date is available for all required market and FX series.",
+      reason: "所有必需行情与外汇序列之间没有可用的共同有效日期。",
     };
   }
   const status = input.tradingDayLag <= maximumTradingDayLag ? "fresh" : "stale";
@@ -118,8 +118,8 @@ export function evaluateMarketDataFreshness(input: {
     observedAt: input.observedAt ?? null,
     observationTimestampQuality,
     reason: status === "fresh"
-      ? `Latest common market date is within ${maximumTradingDayLag} trading day of the expected cutoff.`
-      : `Latest common market date trails the expected cutoff by ${input.tradingDayLag} trading days.`,
+      ? `最新共同行情日期距离预期截止日不超过 ${maximumTradingDayLag} 个交易日。`
+      : `最新共同行情日期较预期截止日滞后 ${input.tradingDayLag} 个交易日。`,
   };
 }
 

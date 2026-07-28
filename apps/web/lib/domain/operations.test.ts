@@ -80,10 +80,12 @@ describe("operations snapshot", () => {
     const input = payload();
     input.health.marketDataFreshness = { ...input.health.marketDataFreshness!, status: "stale", reason: "stale" };
     input.health.operationalAlerts = [{
-      id: "alert-1", source: "market-data-freshness-monitor", severity: "warning", title: "行情过期",
+      id: "alert-1", source: "market_data:normalized", severity: "warning", title: "Market data is not fresh",
       detail: "stale", occurrenceCount: 2, lastObservedAt: "2026-07-25T01:00:00.000Z",
     }];
     const result = buildOperationsSnapshot(input);
-    expect(result.items.filter((item) => item.category === "data")).toHaveLength(1);
+    const dataItems = result.items.filter((item) => item.category === "data");
+    expect(dataItems).toHaveLength(1);
+    expect(dataItems[0]).toMatchObject({ title: "行情需要刷新", detail: "stale" });
   });
 });

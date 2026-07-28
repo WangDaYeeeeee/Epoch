@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceDot, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { TimeRangeScrubber } from "@/components/time-range-scrubber";
 
 type Point = { date: string; portfolio: number; benchmark: number; drawdown?: number; benchmarkDrawdown?: number };
 type Event = { date: string; type: string; label: string; details?: string[] };
@@ -73,23 +74,6 @@ export function PerformanceChart({ data, events }: { data: Point[]; events: Even
     setRange({ startIndex: Math.max(0, found), endIndex: data.length - 1 });
   }
 
-  const lastIndex = Math.max(0, data.length - 1);
-  const startPercent = lastIndex ? range.startIndex / lastIndex * 100 : 0;
-  const endPercent = lastIndex ? range.endIndex / lastIndex * 100 : 100;
-  const selectedDays = visible.length > 1
-    ? Math.round((Date.parse(`${visible.at(-1)?.date}T00:00:00Z`) - Date.parse(`${visible[0]?.date}T00:00:00Z`)) / 86_400_000) + 1
-    : visible.length;
-
-  function setStartIndex(value: number) {
-    setActivePreset(null);
-    setRange((current) => ({ ...current, startIndex: Math.min(Math.max(0, value), current.endIndex) }));
-  }
-
-  function setEndIndex(value: number) {
-    setActivePreset(null);
-    setRange((current) => ({ ...current, endIndex: Math.max(current.startIndex, Math.min(lastIndex, value)) }));
-  }
-
   return <div>
     <div className="range-controls" aria-label="时间范围">
       {[[30, "1月"], [90, "3月"], [180, "6月"], ["ytd", "YTD"], [365, "1年"], ["all", "全部"]].map(([value, label]) => <button className={activePreset === String(value) ? "active" : ""} aria-pressed={activePreset === String(value)} key={String(value)} onClick={() => setPreset(value as number | "ytd" | "all")}>{label}</button>)}
@@ -107,17 +91,13 @@ export function PerformanceChart({ data, events }: { data: Point[]; events: Even
     <div className="event-key"><span><i className="buy"/>买入</span><span><i className="sell"/>卖出</span><span><i className="cash"/>资金流</span><span><i className="transfer"/>账户迁移</span></div>
     <div className="drawdown-title"><div><strong>回撤深度</strong><small>按当前时间窗口重新计算峰值</small></div><span>{Math.min(...normalized.map((p) => p.drawdown ?? 0)).toLocaleString("zh-CN", { style: "percent", maximumFractionDigits: 2 })}</span></div>
     <ResponsiveContainer width="100%" height={160}><ComposedChart data={normalized} margin={{ top: 8, right: 18, left: 0, bottom: 0 }}><CartesianGrid stroke="rgba(169,155,255,.12)" vertical={false}/><XAxis dataKey="date" hide/><YAxis tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} tick={{ fontSize: 10, fill: "#7f7999" }} tickMargin={7} stroke="#7f7999" tickLine={false} axisLine={false} width={42}/><Tooltip contentStyle={{ background: "#15103a", border: "1px solid #2b2460", borderRadius: 12 }} formatter={(v, name) => [`${(Number(v) * 100).toFixed(2)}%`, name]}/><Area type="monotone" dataKey="drawdown" stroke="#7662ee" fill="#7662ee" fillOpacity={0.16} name="组合回撤" animationDuration={CHART_ANIMATION_MS} animationEasing="ease-out"/><Line type="monotone" dataKey="benchmarkDrawdown" stroke="#c09a52" strokeDasharray="7 5" dot={false} name=".NDX 回撤" animationDuration={CHART_ANIMATION_MS} animationEasing="ease-out"/></ComposedChart></ResponsiveContainer>
-    <div className="range-scrubber">
-      <div className="scrubber-head"><span>时间窗口</span><strong>{selectedDays.toLocaleString("zh-CN")} 天</strong></div>
-      <div className="scrubber-track">
-        <div className="scrubber-sparkline" aria-hidden="true"><ResponsiveContainer width="100%" height={52}><ComposedChart data={data} margin={{ top: 5, right: 0, bottom: 5, left: 0 }}><defs><linearGradient id="scrubberFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#7662ee" stopOpacity={0.42}/><stop offset="100%" stopColor="#7662ee" stopOpacity={0.04}/></linearGradient></defs><Area type="monotone" dataKey="portfolio" stroke="#7662ee" strokeWidth={1.4} fill="url(#scrubberFill)" dot={false} isAnimationActive={false}/></ComposedChart></ResponsiveContainer></div>
-        <div className="scrubber-dim left" style={{ width: `${startPercent}%` }}/>
-        <div className="scrubber-selection" style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}/>
-        <div className="scrubber-dim right" style={{ left: `${endPercent}%` }}/>
-        <input className="scrubber-input start" aria-label="开始日期" type="range" min={0} max={lastIndex} value={range.startIndex} onChange={(event) => setStartIndex(Number(event.target.value))}/>
-        <input className="scrubber-input end" aria-label="结束日期" type="range" min={0} max={lastIndex} value={range.endIndex} onChange={(event) => setEndIndex(Number(event.target.value))}/>
-      </div>
-      <div className="scrubber-dates"><time>{visible[0]?.date}</time><span>拖动两端圆点调整区间</span><time>{visible.at(-1)?.date}</time></div>
-    </div>
+    <TimeRangeScrubber
+      data={data.map((point) => ({ date: point.date, preview: point.portfolio }))}
+      range={range}
+      onChange={(next) => {
+        setActivePreset(null);
+        setRange(next);
+      }}
+    />
   </div>;
 }

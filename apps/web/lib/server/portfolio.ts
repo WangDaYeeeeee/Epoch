@@ -327,7 +327,7 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date());
   const [riskRuns, scenarioRuns, driftAnchor, eventHorizon, journal, workflowItems, quality, dataSources, signalCoverage] = await Promise.all([
-    riskRepository.loadCompletedHistory("portfolio-risk", 30),
+    riskRepository.loadCompletedHistory("portfolio-risk", 500),
     riskRepository.loadCompletedHistory("portfolio-risk-rebalance", 5),
     new PostgresRiskDriftAnchorRepository(sql).loadLatest(),
     new PostgresEventHorizonRepository(sql).load(eventAsOf),

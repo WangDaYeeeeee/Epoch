@@ -26,7 +26,12 @@ describe("risk volatility drift", () => {
     expect(result.divergence.weight).toBeCloseTo(0.2);
     expect(result.divergence.riskContribution).toBeCloseTo(0.075);
     expect(result.instruments[0]?.ratio).toBeCloseTo(1.5);
-    expect(result.instruments[0]).toMatchObject({ instrumentId: "US:AAA", level: "highlight" });
+    expect(result.instruments[0]).toMatchObject({
+      instrumentId: "US:AAA",
+      anchorWeight: 0.5,
+      currentWeight: 0.4,
+      level: "highlight",
+    });
     expect(result.instruments[1]).toMatchObject({ instrumentId: "US:BBB", ratio: 2, level: "strong" });
     expect(result.instruments[2]).toMatchObject({
       instrumentId: "US:EXITED",

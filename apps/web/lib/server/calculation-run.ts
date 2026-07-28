@@ -183,14 +183,21 @@ export class PostgresCalculationRunRepository {
   }
 
   async loadCompletedHistory(calculationType: string, limit = 10): Promise<CalculationRunRecord[]> {
-    const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
     const rows = await this.sql<DatabaseRow[]>`
       SELECT id::text, calculation_type, as_of::text, input_hash, code_version, status,
         contract_version, input_payload, engine_version, model_version, output,
         diagnostics, warnings, duration_ms, failure_reason
-      FROM calculation_run
-      WHERE calculation_type = ${calculationType}
-        AND status IN ('succeeded', 'degraded')
+      FROM (
+        SELECT DISTINCT ON (as_of)
+          id, calculation_type, as_of, input_hash, code_version, status,
+          contract_version, input_payload, engine_version, model_version, output,
+          diagnostics, warnings, duration_ms, failure_reason, finished_at
+        FROM calculation_run
+        WHERE calculation_type = ${calculationType}
+          AND status IN ('succeeded', 'degraded')
+        ORDER BY as_of DESC, finished_at DESC, id DESC
+      ) AS history
       ORDER BY as_of DESC, finished_at DESC, id DESC
       LIMIT ${safeLimit}
     `;

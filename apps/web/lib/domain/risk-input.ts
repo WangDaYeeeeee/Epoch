@@ -1,4 +1,5 @@
 import { CASH_EQUIVALENT_INSTRUMENTS, canonicalMarketInstrumentId, isDerivativeInstrumentId } from "./market-data";
+import type { DailyLedgerState } from "./ledger-replay";
 
 type Row = Record<string, string>;
 
@@ -47,6 +48,8 @@ type UsdBar = {
   close: number;
 };
 
+type RiskPosition = Position;
+
 const numeric = (value: string, field: string): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new Error(`Invalid ${field}: ${value}`);
@@ -60,41 +63,20 @@ const usdValue = (row: Row): number => {
   throw new Error(`Position ${row.instrument_id} has no USD valuation`);
 };
 
-export function buildPortfolioRiskInput(positionRows: Row[], marketBarRows: Row[]): PortfolioRiskInput {
-  const latestPositionDate = positionRows.map((row) => row.date).filter(Boolean).sort().at(-1);
-  if (!latestPositionDate) throw new Error("Risk input requires a position snapshot");
-  const currentRows = positionRows.filter((row) => row.date === latestPositionDate);
-  const portfolioNavUsd = currentRows.reduce((sum, row) => sum + usdValue(row), 0);
+function buildRiskInput(
+  positions: RiskPosition[],
+  portfolioNavUsd: number,
+  marketBarRows: Row[],
+  asOfDate?: string,
+): PortfolioRiskInput {
   if (!Number.isFinite(portfolioNavUsd) || portfolioNavUsd <= 0) {
     throw new Error("Risk input requires a positive USD portfolio NAV");
   }
-
-  const groupedPositions = new Map<string, Position>();
-  for (const row of currentRows) {
-    if (
-      ["cash", "other"].includes(row.category)
-      || row.instrument_id.startsWith("CASH:")
-      || row.instrument_id.startsWith("ACCRUAL:")
-      || CASH_EQUIVALENT_INSTRUMENTS.has(row.instrument_id)
-      || isDerivativeInstrumentId(row.instrument_id)
-      || Math.abs(numeric(row.quantity, "quantity")) <= 1e-12
-    ) continue;
-    const instrumentId = canonicalMarketInstrumentId(row.instrument_id);
-    const existing = groupedPositions.get(instrumentId);
-    if (existing && existing.currency !== row.currency) {
-      throw new Error(`Canonical instrument ${instrumentId} has conflicting currencies`);
-    }
-    groupedPositions.set(instrumentId, {
-      instrumentId,
-      currency: row.currency,
-      marketValueUsd: (existing?.marketValueUsd ?? 0) + usdValue(row),
-    });
-  }
-  const positions = [...groupedPositions.values()].sort((left, right) => left.instrumentId.localeCompare(right.instrumentId));
   if (!positions.length) throw new Error("Risk input has no market-risk positions");
 
   const fxCloseByPairAndDate = new Map<string, Map<string, number>>();
   for (const row of marketBarRows) {
+    if (asOfDate && row.date > asOfDate) continue;
     if (!row.instrument_id.startsWith("FX:")) continue;
     const daily = fxCloseByPairAndDate.get(row.instrument_id) ?? new Map<string, number>();
     daily.set(row.date, numeric(row.close, "FX close"));
@@ -103,7 +85,10 @@ export function buildPortfolioRiskInput(positionRows: Row[], marketBarRows: Row[
   const barsByInstrument = new Map<string, UsdBar[]>();
   for (const position of positions) {
     const sourceRows = marketBarRows
-      .filter((row) => canonicalMarketInstrumentId(row.instrument_id) === position.instrumentId)
+      .filter((row) =>
+        canonicalMarketInstrumentId(row.instrument_id) === position.instrumentId
+        && (!asOfDate || row.date <= asOfDate),
+      )
       .sort((left, right) => left.date.localeCompare(right.date));
     const fx = position.currency === "USD"
       ? undefined
@@ -133,11 +118,14 @@ export function buildPortfolioRiskInput(positionRows: Row[], marketBarRows: Row[
     throw new Error(`Risk input requires 251 common USD close dates; received ${alignedDates.length}`);
   }
   const valuationDates = alignedDates.slice(-251);
-  const asOfDate = valuationDates.at(-1)!;
+  const resolvedAsOfDate = valuationDates.at(-1)!;
+  if (asOfDate && resolvedAsOfDate !== asOfDate) {
+    throw new Error(`Risk input has no aligned market close for ${asOfDate}; latest is ${resolvedAsOfDate}`);
+  }
 
   return {
     schemaVersion: "portfolio-risk-input/1.0",
-    asOf: `${asOfDate}T00:00:00Z`,
+    asOf: `${resolvedAsOfDate}T00:00:00Z`,
     baseCurrency: "USD",
     weightDefinition: "market_value_usd_over_net_nav_cash_in_denominator",
     marketDataDefinition: {
@@ -163,4 +151,100 @@ export function buildPortfolioRiskInput(positionRows: Row[], marketBarRows: Row[
       };
     }),
   };
+}
+
+export function buildPortfolioRiskInput(positionRows: Row[], marketBarRows: Row[]): PortfolioRiskInput {
+  const latestPositionDate = positionRows.map((row) => row.date).filter(Boolean).sort().at(-1);
+  if (!latestPositionDate) throw new Error("Risk input requires a position snapshot");
+  const currentRows = positionRows.filter((row) => row.date === latestPositionDate);
+  const portfolioNavUsd = currentRows.reduce((sum, row) => sum + usdValue(row), 0);
+  const groupedPositions = new Map<string, Position>();
+  for (const row of currentRows) {
+    if (
+      ["cash", "other"].includes(row.category)
+      || row.instrument_id.startsWith("CASH:")
+      || row.instrument_id.startsWith("ACCRUAL:")
+      || CASH_EQUIVALENT_INSTRUMENTS.has(row.instrument_id)
+      || isDerivativeInstrumentId(row.instrument_id)
+      || Math.abs(numeric(row.quantity, "quantity")) <= 1e-12
+    ) continue;
+    const instrumentId = canonicalMarketInstrumentId(row.instrument_id);
+    const existing = groupedPositions.get(instrumentId);
+    if (existing && existing.currency !== row.currency) {
+      throw new Error(`Canonical instrument ${instrumentId} has conflicting currencies`);
+    }
+    groupedPositions.set(instrumentId, {
+      instrumentId,
+      currency: row.currency,
+      marketValueUsd: (existing?.marketValueUsd ?? 0) + usdValue(row),
+    });
+  }
+  return buildRiskInput(
+    [...groupedPositions.values()].sort((left, right) => left.instrumentId.localeCompare(right.instrumentId)),
+    portfolioNavUsd,
+    marketBarRows,
+  );
+}
+
+export function buildHistoricalPortfolioRiskInput(
+  state: DailyLedgerState,
+  portfolioNavUsd: number,
+  marketBarRows: Row[],
+  splitRows: Row[] = [],
+): PortfolioRiskInput {
+  const futureSplitFactor = (instrumentId: string): number => splitRows
+    .filter((row) =>
+      row.date > state.date
+      && canonicalMarketInstrumentId(row.instrument_id) === instrumentId,
+    )
+    .reduce((factor, row) => factor * numeric(row.numerator, "split numerator") / numeric(row.denominator, "split denominator"), 1);
+  const quantities = new Map<string, number>();
+  for (const [key, quantity] of Object.entries(state.quantities)) {
+    const separator = key.indexOf("|");
+    const instrumentId = canonicalMarketInstrumentId(separator >= 0 ? key.slice(separator + 1) : key);
+    if (
+      instrumentId.startsWith("CASH:")
+      || instrumentId.startsWith("ACCRUAL:")
+      || CASH_EQUIVALENT_INSTRUMENTS.has(instrumentId)
+      || isDerivativeInstrumentId(instrumentId)
+      || Math.abs(quantity) <= 1e-12
+    ) continue;
+    quantities.set(
+      instrumentId,
+      (quantities.get(instrumentId) ?? 0) + quantity * futureSplitFactor(instrumentId),
+    );
+  }
+
+  const currencyByInstrument = new Map<string, string>();
+  const closeByInstrument = new Map<string, number>();
+  const fxClose = new Map<string, number>();
+  for (const row of marketBarRows) {
+    if (row.date !== state.date) continue;
+    if (row.instrument_id.startsWith("FX:")) {
+      fxClose.set(row.instrument_id, numeric(row.close, "FX close"));
+      continue;
+    }
+    const instrumentId = canonicalMarketInstrumentId(row.instrument_id);
+    if (!quantities.has(instrumentId)) continue;
+    const existingCurrency = currencyByInstrument.get(instrumentId);
+    if (existingCurrency && existingCurrency !== row.currency) {
+      throw new Error(`Canonical instrument ${instrumentId} has conflicting currencies`);
+    }
+    currencyByInstrument.set(instrumentId, row.currency);
+    closeByInstrument.set(instrumentId, numeric(row.close, "close"));
+  }
+
+  const positions = [...quantities.entries()]
+    .filter(([, quantity]) => Math.abs(quantity) > 1e-12)
+    .map(([instrumentId, quantity]): RiskPosition => {
+      const currency = currencyByInstrument.get(instrumentId);
+      const close = closeByInstrument.get(instrumentId);
+      if (!currency || close == null) throw new Error(`Risk input has no ${state.date} market close for ${instrumentId}`);
+      const rate = currency === "USD" ? 1 : fxClose.get(`FX:${currency}USD`);
+      if (rate == null) throw new Error(`Risk input has no ${state.date} FX close for ${currency}USD`);
+      return { instrumentId, currency, marketValueUsd: quantity * close * rate };
+    })
+    .sort((left, right) => left.instrumentId.localeCompare(right.instrumentId));
+
+  return buildRiskInput(positions, portfolioNavUsd, marketBarRows, state.date);
 }

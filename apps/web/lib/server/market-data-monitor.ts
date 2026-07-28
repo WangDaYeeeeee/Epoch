@@ -30,7 +30,7 @@ export async function persistMarketDataFreshness(sql: Sql, freshness: MarketData
       id, source, fingerprint, severity, status, title, detail
     ) VALUES (
       ${randomUUID()}, ${SOURCE}, ${FINGERPRINT}, 'warning', 'open',
-      'Market data is not fresh', ${detail}
+      '行情需要刷新', ${detail}
     )
     ON CONFLICT (source, fingerprint) DO UPDATE
     SET severity = 'warning', status = 'open', detail = EXCLUDED.detail,

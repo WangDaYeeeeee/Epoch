@@ -16,6 +16,8 @@ export type RiskDriftSnapshot = {
   };
   instruments: {
     instrumentId: string;
+    anchorWeight: number;
+    currentWeight: number | null;
     anchorVolatilityAnnualized: number;
     currentVolatilityAnnualized: number | null;
     ratio: number | null;
@@ -93,6 +95,8 @@ export function calculateRiskDrift(input: {
       const instrumentRatio = ratio(currentVolatilityAnnualized, anchor.volatilityAnnualized);
       return {
         instrumentId: anchor.instrumentId,
+        anchorWeight: anchor.weight,
+        currentWeight: current.get(anchor.instrumentId)?.weight ?? null,
         anchorVolatilityAnnualized: anchor.volatilityAnnualized,
         currentVolatilityAnnualized,
         ratio: instrumentRatio,

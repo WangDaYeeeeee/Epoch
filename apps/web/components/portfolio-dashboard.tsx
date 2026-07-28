@@ -1,10 +1,14 @@
 import { PerformanceChart } from "@/components/performance-chart";
 import { MarketRefreshControl } from "@/components/market-refresh-control";
-import { RebalanceRiskForm, RiskAnchorForm } from "@/components/risk-actions";
+import { HistoricalRiskBackfillControl, TargetWeightAnchorForm } from "@/components/risk-actions";
+import { RiskMetricCards } from "@/components/risk-metric-cards";
+import { RiskInstrumentDetails } from "@/components/risk-instrument-details";
 import { WorkflowConsole } from "@/components/workflow-console";
 import { ResearchMemorySearch } from "@/components/research-memory-search";
 import type { PortfolioPayload } from "@/lib/types";
 import { loadPortfolioPreferDatabase } from "@/lib/server/portfolio";
+import { instrumentClassifications } from "@/lib/domain/instrument-classifications";
+import { CASH_EQUIVALENT_INSTRUMENTS, canonicalMarketInstrumentId, isDerivativeInstrumentId } from "@/lib/domain/market-data";
 
 export const dynamic = "force-dynamic";
 
@@ -14,13 +18,45 @@ async function getPortfolio(): Promise<PortfolioPayload> {
 
 const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const percent = (value: number) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-const riskPercent = (value: number) => `${(value * 100).toFixed(2)}%`;
+const instrumentNameFallbacks = new Map([
+  ["US:SOXX", "iShares Semiconductor ETF"],
+]);
 
 export type DashboardView = "workbench" | "portfolio" | "research" | "system";
 
 export async function PortfolioDashboard({ view }: { view: DashboardView }) {
   const data = await getPortfolio();
+  const instrumentNames = new Map([
+    ...instrumentClassifications.flatMap((item) => item.issuer ? [[item.instrumentId, item.issuer.name] as const] : []),
+    ...data.positions.map((item) => [item.instrumentId, item.name ?? item.symbol] as const),
+  ]);
+  const instrumentName = (instrumentId: string) =>
+    instrumentNames.get(instrumentId) || instrumentNameFallbacks.get(instrumentId) || "名称待补充";
+  const currentRiskPositionMap = new Map<string, { instrumentId: string; name: string; marketValue: number }>();
+  for (const position of data.positions) {
+    const instrumentId = canonicalMarketInstrumentId(position.instrumentId);
+    if (
+      CASH_EQUIVALENT_INSTRUMENTS.has(instrumentId)
+      || isDerivativeInstrumentId(instrumentId)
+      || Math.abs(position.marketValue) <= 1e-9
+    ) continue;
+    const existing = currentRiskPositionMap.get(instrumentId);
+    currentRiskPositionMap.set(instrumentId, {
+      instrumentId,
+      name: position.name ?? existing?.name ?? instrumentName(instrumentId),
+      marketValue: (existing?.marketValue ?? 0) + position.marketValue,
+    });
+  }
+  const currentRiskPositions = [...currentRiskPositionMap.values()].sort((left, right) => right.marketValue - left.marketValue);
   const invested = data.summary.nav - data.summary.cash;
+  const tradingDaySeries = data.series.filter((point, index) =>
+    index === 0 || point.benchmark !== data.series[index - 1].benchmark);
+  const dailyReturnExtremes = tradingDaySeries.slice(1).map((point, index) => ({
+    date: point.date,
+    return: point.portfolio / tradingDaySeries[index].portfolio - 1,
+  }));
+  const bestDailyReturns = [...dailyReturnExtremes].sort((left, right) => right.return - left.return).slice(0, 5);
+  const worstDailyReturns = [...dailyReturnExtremes].sort((left, right) => left.return - right.return).slice(0, 5);
   const page = {
     workbench: { eyebrow: "WORKBENCH", title: "工作台", description: "今日待办、风险卡口与事件视界" },
     portfolio: { eyebrow: "PORTFOLIO", title: "组合", description: "持仓、绩效、归因与敞口穿透" },
@@ -53,22 +89,33 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
               </span>
             </div>
             <div className="operations-summary">
-              <div><strong>{data.operations.counts.critical}</strong><span>关键</span></div>
-              <div><strong>{data.operations.counts.action}</strong><span>待处理</span></div>
-              <div><strong>{data.operations.counts.review}</strong><span>待复核</span></div>
+              <div className="critical"><span>关键事项</span><strong>{data.operations.counts.critical}</strong><small>立即检查风险与数据</small></div>
+              <div className="action"><span>待处理</span><strong>{data.operations.counts.action}</strong><small>近期需要完成动作</small></div>
+              <div className="review"><span>待复核</span><strong>{data.operations.counts.review}</strong><small>进入人工判断队列</small></div>
             </div>
             {data.operations.items.length ? (
               <div className="operations-list">
-                {data.operations.items.map((item) => (
-                  <div className={`operation-item ${item.priority}`} key={item.id}>
-                    <span>{({
-                      risk: "风险", data: "数据", event: "事件", coverage: "覆盖",
-                      refill: "回补", governance: "治理", review: "复盘", approval: "确认",
-                    } as const)[item.category]}</span>
-                    <div><strong>{item.title}</strong><p>{item.detail}</p></div>
-                    <small>{item.evidence}</small>
-                  </div>
-                ))}
+                {(["critical", "action", "review"] as const).map((priority) => {
+                  const items = data.operations!.items.filter((item) => item.priority === priority);
+                  return (
+                    <div className={`operation-column ${priority}`} key={priority}>
+                      {items.length ? items.map((item) => (
+                        <div className={`operation-item ${item.priority}`} key={item.id}>
+                          <span className="operation-category">{({
+                            risk: "风险", data: "数据", event: "事件", coverage: "覆盖",
+                            refill: "回补", governance: "治理", review: "复盘", approval: "确认",
+                          } as const)[item.category]}</span>
+                          <div><strong>{item.title}</strong><p>{item.detail}</p></div>
+                          <small>{item.evidence}</small>
+                        </div>
+                      )) : (
+                        <p className="operation-column-empty">
+                          {priority === "critical" ? "当前无关键事项" : priority === "action" ? "当前无待处理事项" : "当前无待复核事项"}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : <p className="operations-clear">当前数据、风险卡口与覆盖检查均无待处理事项。</p>}
           </article>
@@ -188,140 +235,35 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
                 45% 卡口 · {data.risk.policyGate.passed ? "通过" : "越界"}
               </span>
             </div>
-            <div className="risk-metrics">
-              <div><span>组合 σₚ</span><strong>{riskPercent(data.risk.portfolio.volatilityAnnualized)}</strong><small>余量 {riskPercent(data.risk.policyGate.limitAnnualized - data.risk.policyGate.observedAnnualized)}</small></div>
-              <div><span>Stress σₚ</span><strong>{riskPercent(data.risk.portfolio.stressVolatilityAnnualized)}</strong><small>ρ 非对角统一为 0.90 · 仅呈现</small></div>
-              <div><span>历史 CVaR</span><strong>{data.risk.portfolio.historicalCvarLoss == null ? "不可用" : riskPercent(data.risk.portfolio.historicalCvarLoss)}</strong><small>{(data.risk.portfolio.cvarConfidence * 100).toFixed(0)}% 置信度 · 损失口径</small></div>
-              <div><span>运行状态</span><strong>{data.risk.status === "degraded" ? "降级估计器" : "完整模型"}</strong><small>{data.risk.dataStatus === "stale" ? "行情已过期" : "行情新鲜"}</small></div>
+            <div className="risk-provenance">
+              <span><i className="batch" />批次计算</span>
+              <span><i className={data.risk.dataStatus} />行情{data.risk.dataStatus === "fresh" ? "新鲜" : "已过期"}</span>
+              <span>CalculationRun {data.risk.calculationId.slice(0, 8)}</span>
+              <small>页面展示最近一次已完成结果，不是盘中实时风险流。</small>
             </div>
-            <div className="risk-table">
-              {[...data.risk.instruments].sort((left, right) => right.riskContribution - left.riskContribution).map((item) => (
-                <div className="risk-row" key={item.instrumentId}>
-                  <strong>{item.instrumentId}</strong>
-                  <span>权重 {riskPercent(item.weight)}</span>
-                  <span>σᵢ {riskPercent(item.volatilityAnnualized)}</span>
-                  <span>RC {riskPercent(item.riskContribution)}</span>
-                  <span>RC/w {item.riskCapitalRatio == null ? "—" : riskPercent(item.riskCapitalRatio)}</span>
-                </div>
-              ))}
-            </div>
-            {data.risk.modelDiagnostics && (
-              <section className="risk-model-diagnostics">
-                <div className="risk-history-head">
-                  <h3>SHAR 预测与尾部监控</h3>
-                  <small>{data.risk.modelDiagnostics.semivarianceResolution} · IV {data.risk.modelDiagnostics.ivInputStatus}</small>
-                </div>
-                <div className="risk-table">
-                  {data.risk.modelDiagnostics.forecasts.map((forecast) => (
-                    <div className="risk-row" key={forecast.instrumentId}>
-                      <strong>{forecast.instrumentId}</strong>
-                      <span>RS⁺ {(forecast.positiveSemivariance22d * 10000).toFixed(2)}bp²</span>
-                      <span>RS⁻ {(forecast.negativeSemivariance22d * 10000).toFixed(2)}bp²</span>
-                      <span>ΔJ {(forecast.signedJump22d * 10000).toFixed(2)}bp²</span>
-                      <span>OOS RMSE {(forecast.expandingWindowBacktest.rmse * 10000).toFixed(2)}bp²</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="risk-monitor-grid">
-                  <div><span>相关性聚类</span><strong>{data.risk.modelDiagnostics.correlationClusters.map((cluster) => cluster.join(" + ")).join(" · ")}</strong></div>
-                  <div><span>最差历史 5 日窗口</span><strong>{data.risk.modelDiagnostics.historicalCrashWeeks.map((week) => `${week.endDate} ${percent(week.return)}`).join(" · ")}</strong></div>
-                  <div><span>D_w / D_r</span><strong>{data.riskDrift
-                    ? `${riskPercent(data.riskDrift.divergence.weight)} / ${data.riskDrift.divergence.riskContribution == null ? "—" : riskPercent(data.riskDrift.divergence.riskContribution)}`
-                    : "待已执行目标锚点"}</strong></div>
-                </div>
-              </section>
-            )}
             <div className="risk-actions">
-              <RebalanceRiskForm initialWeights={data.risk.instruments.map((item) => ({
+              <TargetWeightAnchorForm initialWeights={currentRiskPositions.map((item) => ({
                 instrumentId: item.instrumentId,
-                weight: item.weight,
-              }))} />
-              <RiskAnchorForm options={[
-                {
-                  calculationId: data.risk.calculationId,
-                  label: `当前真实组合 · ${data.risk.asOf.slice(0, 10)} · ${data.risk.calculationId.slice(0, 8)}`,
-                },
-                ...(data.riskScenarios ?? []).map((scenario) => ({
-                  calculationId: scenario.calculationId,
-                  label: `调仓测算 · ${scenario.asOf.slice(0, 10)} · ${scenario.calculationId.slice(0, 8)}`,
-                })),
-              ]} />
+                name: item.name,
+                weight: data.riskDrift?.instruments.find((anchor) => anchor.instrumentId === item.instrumentId)?.anchorWeight
+                  ?? item.marketValue / data.summary.nav,
+              }))} anchorInstrumentIds={data.riskDrift?.instruments.map((item) => item.instrumentId)} />
+              <HistoricalRiskBackfillControl />
             </div>
-            {(data.riskHistory?.length ?? 0) > 0 && (
-              <section className="risk-history">
-                <div className="risk-history-head">
-                  <h3>真实风险运行趋势</h3>
-                  <small>最近 {data.riskHistory!.length} 次 · 不含调仓意向</small>
-                </div>
-                <div className="risk-history-list">
-                  {data.riskHistory!.map((point, index) => {
-                    const previous = data.riskHistory![index - 1];
-                    const delta = previous
-                      ? point.portfolio.volatilityAnnualized - previous.portfolio.volatilityAnnualized
-                      : null;
-                    const width = Math.min(100, point.portfolio.volatilityAnnualized / point.policyGate.limitAnnualized * 100);
-                    return (
-                      <div className="risk-history-row" key={point.calculationId}>
-                        <time>{point.asOf.slice(0, 10)}</time>
-                        <div className="risk-history-bar"><i style={{ width: `${width}%` }} /></div>
-                        <strong>{riskPercent(point.portfolio.volatilityAnnualized)}</strong>
-                        <span>{delta == null ? "基线" : `Δ ${percent(delta)}`}</span>
-                        <span>Stress {riskPercent(point.portfolio.stressVolatilityAnnualized)}</span>
-                        <span>CVaR {point.portfolio.historicalCvarLoss == null ? "—" : riskPercent(point.portfolio.historicalCvarLoss)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="exposure-note">每个点均来自已完成的真实组合风险运行；45% 标线仅对应现行唯一硬卡口。</p>
-              </section>
-            )}
-            {(data.riskScenarios?.length ?? 0) > 0 && (
-              <section className="risk-scenarios">
-                <h3>最近调仓意向测算</h3>
-                {data.riskScenarios!.map((scenario) => (
-                  <div className="risk-scenario" key={scenario.calculationId}>
-                    <div>
-                      <strong>{scenario.calculationId.slice(0, 8)}</strong>
-                      <small>{scenario.instruments.map((item) => `${item.instrumentId.split(":").at(-1)} ${(item.weight * 100).toFixed(0)}%`).join(" · ")}</small>
-                    </div>
-                    <span>σₚ {riskPercent(scenario.portfolio.volatilityAnnualized)}</span>
-                    <span className={scenario.portfolio.volatilityAnnualized <= data.risk!.portfolio.volatilityAnnualized ? "gain" : ""}>
-                      较当前 {percent(scenario.portfolio.volatilityAnnualized - data.risk!.portfolio.volatilityAnnualized)}
-                    </span>
-                    <span>Stress {riskPercent(scenario.portfolio.stressVolatilityAnnualized)}</span>
-                    <span>{scenario.policyGate.passed ? "卡口通过" : "卡口越界"}</span>
-                  </div>
-                ))}
-                <p className="exposure-note">历史意向仅用于比较和审计，不代表已采用或已执行。</p>
-              </section>
-            )}
-            <section className="risk-drift">
-              <h3>波动率漂移锚点</h3>
-              {data.riskDrift ? (
-                <>
-                  <div className={`risk-drift-summary ${data.riskDrift.portfolio.level}`}>
-                    <span>σₚ / σₚ⁰</span>
-                    <strong>{data.riskDrift.portfolio.ratio == null ? "—" : `${data.riskDrift.portfolio.ratio.toFixed(2)}×`}</strong>
-                    <small>锚点 {data.riskDrift.effectiveAt.slice(0, 10)}</small>
-                    <small>D_w {riskPercent(data.riskDrift.divergence.weight)}</small>
-                    <small>D_r {data.riskDrift.divergence.riskContribution == null ? "历史锚点不可用" : riskPercent(data.riskDrift.divergence.riskContribution)}</small>
-                  </div>
-                  <div className="risk-table">
-                    {data.riskDrift.instruments.map((item) => (
-                      <div className={`risk-row drift-${item.level}`} key={item.instrumentId}>
-                        <strong>{item.instrumentId}</strong>
-                        <span>σᵢ⁰ {riskPercent(item.anchorVolatilityAnnualized)}</span>
-                        <span>当前 {item.currentVolatilityAnnualized == null ? "已退出/缺失" : riskPercent(item.currentVolatilityAnnualized)}</span>
-                        <span>倍数 {item.ratio == null ? "—" : `${item.ratio.toFixed(2)}×`}</span>
-                        <span>{item.level === "strong" ? "强提示" : item.level === "highlight" ? "提示" : "正常"}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="exposure-note">尚未由用户确认调仓锚点；系统不会自动把测算场景当成已执行组合。</p>
-              )}
-            </section>
+            <RiskMetricCards
+              risk={data.risk}
+              history={data.riskHistory ?? []}
+              performance={data.series}
+              drift={data.riskDrift}
+              driftInstruments={(data.riskDrift?.instruments ?? []).map((item) => ({
+                ...item,
+                name: instrumentName(item.instrumentId),
+              }))}
+            />
+            <RiskInstrumentDetails
+              instruments={data.risk.instruments.map((item) => ({ ...item, name: instrumentName(item.instrumentId) }))}
+              diagnostics={data.risk.modelDiagnostics}
+            />
             <p className="exposure-note">当前结果使用 60 日 Garman–Klass 降级口径。{data.risk.dataStatus === "stale" ? "行情不是最新状态，不作为新的正式交易结论。" : ""}</p>
           </article>
         )}
@@ -336,6 +278,33 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
               {data.positions.map((position) => (
                 <div className="position" key={position.symbol}><div><strong>{position.symbol}</strong><small>{position.name ?? position.symbol} · {position.quantity} 股 · {position.currency}</small></div><div className="position-value"><strong>{money.format(position.marketValue)}</strong><small>{((position.marketValue / invested) * 100).toFixed(1)}%</small></div></div>
               ))}
+            </div>
+          </article>
+          <article className="panel portfolio-only performance-extremes-panel">
+            <div className="panel-head"><div><h2>历史单日极值</h2><p>组合净值 · 完整历史</p></div></div>
+            <div className="performance-extremes-grid">
+              <section className="best">
+                <div><h3>涨幅最高</h3><small>Top 5</small></div>
+                <div className="performance-extreme-list">
+                  {bestDailyReturns.map((item) => (
+                    <div key={item.date}>
+                      <time>{item.date}</time>
+                      <strong>{percent(item.return)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <section className="worst">
+                <div><h3>跌幅最大</h3><small>Top 5</small></div>
+                <div className="performance-extreme-list">
+                  {worstDailyReturns.map((item) => (
+                    <div key={item.date}>
+                      <time>{item.date}</time>
+                      <strong>{percent(item.return)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </section>
             </div>
           </article>
           <article className="panel health system-only" id="health">
@@ -428,7 +397,7 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
             <div className="attribution-grid">
               {data.returnAttribution.securities.slice(0, 8).map((item) => (
                 <div className="exposure-row" key={item.instrumentId}>
-                  <span>{item.instrumentId}</span>
+                  <span className="exposure-instrument"><b>{item.instrumentId}</b><small>{instrumentName(item.instrumentId)}</small></span>
                   <strong>{money.format(item.pnlUsd)}</strong>
                 </div>
               ))}
@@ -472,7 +441,7 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
                   <thead><tr><th>账户 / 证券</th><th>报告区间</th><th>推算数量</th><th>报告数量</th><th>差异</th><th>状态</th></tr></thead>
                   <tbody>{data.health.positionReconciliation.differences.map((difference) => (
                     <tr key={`${difference.accountId}:${difference.toDate}:${difference.instrumentId}`}>
-                      <td><strong>{difference.instrumentId.split(":").at(-1)}</strong><small>{difference.accountId}</small></td>
+                      <td><strong>{difference.instrumentId.split(":").at(-1)}</strong><small>{instrumentName(difference.instrumentId)} · {difference.accountId}</small></td>
                       <td>{difference.fromDate}<small>至 {difference.toDate}</small></td>
                       <td>{difference.expectedQuantity.toLocaleString("zh-CN")}</td>
                       <td>{difference.reportedQuantity.toLocaleString("zh-CN")}</td>
