@@ -3,8 +3,10 @@ import { MarketRefreshControl } from "@/components/market-refresh-control";
 import { HistoricalRiskBackfillControl, TargetWeightAnchorForm } from "@/components/risk-actions";
 import { RiskMetricCards } from "@/components/risk-metric-cards";
 import { RiskInstrumentDetails } from "@/components/risk-instrument-details";
+import { RiskGuide } from "@/components/risk-guide";
 import { WorkflowConsole } from "@/components/workflow-console";
 import { ResearchMemorySearch } from "@/components/research-memory-search";
+import { BriefcaseBusiness, Check, Home, Search, Settings } from "lucide-react";
 import type { PortfolioPayload } from "@/lib/types";
 import { loadPortfolioPreferDatabase } from "@/lib/server/portfolio";
 import { instrumentClassifications } from "@/lib/domain/instrument-classifications";
@@ -67,14 +69,13 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
     <main className={`dashboard dashboard-${view}`}>
       <aside>
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">E</span>
-          <span className="brand-copy"><b>EPOCH</b><small>INVESTMENT CONTROL</small></span>
+          <b>EPOCH</b>
         </div>
         <nav>
-          <a className={view === "workbench" ? "active" : ""} href="/"><i aria-hidden="true">⌂</i><span>工作台</span></a>
-          <a className={view === "portfolio" ? "active" : ""} href="/portfolio"><i aria-hidden="true">◫</i><span>组合</span></a>
-          <a className={view === "research" ? "active" : ""} href="/research"><i aria-hidden="true">⌕</i><span>研究</span></a>
-          <a className={view === "system" ? "active" : ""} href="/system"><i aria-hidden="true">◇</i><span>系统</span></a>
+          <a className={view === "workbench" ? "active" : ""} href="/"><i aria-hidden="true"><Home /></i><span>工作台</span></a>
+          <a className={view === "portfolio" ? "active" : ""} href="/portfolio"><i aria-hidden="true"><BriefcaseBusiness /></i><span>组合</span></a>
+          <a className={view === "research" ? "active" : ""} href="/research"><i aria-hidden="true"><Search /></i><span>研究</span></a>
+          <a className={view === "system" ? "active" : ""} href="/system"><i aria-hidden="true"><Settings /></i><span>系统</span></a>
         </nav>
         <div className="account"><span>卫星仓账户边界</span><strong>{data.meta.account}</strong><small>只读 · {data.meta.baseCurrency}</small></div>
       </aside>
@@ -233,7 +234,10 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
         {data.risk && (
           <article className="panel risk-panel view-section view-workbench" id="risk">
             <div className="panel-head">
-              <div><h2>组合风险</h2><p>截至 {data.risk.asOf.slice(0, 10)} · {data.risk.modelVersion}</p></div>
+              <div>
+                <div className="risk-panel-title"><h2>组合风险</h2><RiskGuide /></div>
+                <p>截至 {data.risk.asOf.slice(0, 10)} · {data.risk.modelVersion}</p>
+              </div>
               <span className={`reconciliation-status ${data.risk.policyGate.passed ? "passed" : "pending"}`}>
                 45% 卡口 · {data.risk.policyGate.passed ? "通过" : "越界"}
               </span>
@@ -267,7 +271,7 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
               instruments={data.risk.instruments.map((item) => ({ ...item, name: instrumentName(item.instrumentId) }))}
               diagnostics={data.risk.modelDiagnostics}
             />
-            <p className="exposure-note">当前结果使用 60 日 Garman–Klass 降级口径。{data.risk.dataStatus === "stale" ? "行情不是最新状态，不作为新的正式交易结论。" : ""}</p>
+            <p className="exposure-note">当前结果使用 SHAR 日频半方差近似、250 日样本相关性；IV 输入暂不可用，模型处于降级状态。{data.risk.dataStatus === "stale" ? "行情不是最新状态，不作为新的正式交易结论。" : ""}</p>
           </article>
         )}
         <article className="panel chart-panel view-section view-portfolio">
@@ -312,7 +316,7 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
           </article>
           <article className="panel health system-only" id="health">
             <div className="panel-head"><div><h2>数据健康</h2><p>最后可信快照</p></div><span className={`status ${data.health.status === "healthy" ? "" : "warning"}`}>{data.health.status === "healthy" ? "可用" : "需关注"}</span></div>
-            <div className="health-score"><span style={{ flex: "0 0 32px", minWidth: 32, minHeight: 32, lineHeight: 1 }}>✓</span><div><strong>数据连续性</strong><p>{data.health.message}</p></div></div>
+            <div className="health-score"><span style={{ flex: "0 0 32px", minWidth: 32, minHeight: 32, lineHeight: 1 }}><Check aria-hidden="true" size={17} strokeWidth={2.4} /></span><div><strong>数据连续性</strong><p>{data.health.message}</p></div></div>
             {(data.health.operationalAlerts?.length ?? 0) > 0 && (
               <div className="operational-alerts">
                 {data.health.operationalAlerts!.map((alert) => (

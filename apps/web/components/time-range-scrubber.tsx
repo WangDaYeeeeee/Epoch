@@ -24,6 +24,7 @@ export function TimeRangeScrubber({
   const visible = data.slice(range.startIndex, range.endIndex + 1);
   const startPercent = lastIndex ? range.startIndex / lastIndex * 100 : 0;
   const endPercent = lastIndex ? range.endIndex / lastIndex * 100 : 100;
+  const canPan = range.endIndex - range.startIndex < lastIndex;
   const selectedDays = visible.length > 1
     ? Math.round((Date.parse(`${visible.at(-1)?.date}T00:00:00Z`) - Date.parse(`${visible[0]?.date}T00:00:00Z`)) / 86_400_000) + 1
     : visible.length;
@@ -48,21 +49,21 @@ export function TimeRangeScrubber({
       <div className="scrubber-track">
         <div className="scrubber-window">
           <div className="scrubber-sparkline" aria-hidden="true">
-            <ResponsiveContainer width="100%" height={48}>
-              <ComposedChart data={data} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
+            <ResponsiveContainer width="100%" height={16}>
+              <ComposedChart data={data} margin={{ top: 1, right: 0, bottom: 1, left: 0 }}>
                 <defs>
                   <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={accent} stopOpacity={0.42} />
-                    <stop offset="100%" stopColor={accent} stopOpacity={0.04} />
+                    <stop offset="0%" stopColor={accent} stopOpacity={0.32} />
+                    <stop offset="100%" stopColor={accent} stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="preview" stroke={accent} strokeWidth={1.4} fill={`url(#${gradientId})`} dot={false} isAnimationActive={false} />
+                <Area type="monotone" dataKey="preview" stroke={accent} strokeWidth={1.15} fill={`url(#${gradientId})`} dot={false} isAnimationActive={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
           <div className="scrubber-dim left" style={{ width: `${startPercent}%` }} />
           <div
-            className="scrubber-selection"
+            className={`scrubber-selection${canPan ? " movable" : ""}`}
             style={{
               left: `${startPercent}%`,
               width: `${Math.max(0, endPercent - startPercent)}%`,
@@ -70,7 +71,7 @@ export function TimeRangeScrubber({
             } as CSSProperties}
             onPointerDown={(event) => {
               const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
-              if (!bounds || range.startIndex === range.endIndex) return;
+              if (!bounds || !canPan) return;
               event.currentTarget.setPointerCapture(event.pointerId);
               drag.current = {
                 clientX: event.clientX,
@@ -134,9 +135,9 @@ export function TimeRangeScrubber({
         </div>
       </div>
       <div className="scrubber-label-rail">
-        <time style={{ left: `${startPercent}%` }}>{visible[0]?.date}</time>
-        <span>拖动圆点缩放 · 拖动高亮区间平移</span>
-        <time style={{ left: `${endPercent}%` }}>{visible.at(-1)?.date}</time>
+        <time className="start" style={{ left: `${startPercent}%` }}>{visible[0]?.date}</time>
+        <span>拖动边缘缩放 · 拖动高亮区间平移</span>
+        <time className="end" style={{ left: `${endPercent}%` }}>{visible.at(-1)?.date}</time>
       </div>
     </div>
   );

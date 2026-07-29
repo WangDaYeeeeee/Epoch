@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import type { RiskDriftSnapshot } from "@/lib/domain/risk-drift";
+import { useModalScrollLock } from "@/components/use-modal-scroll-lock";
 
 export type NamedRiskDriftInstrument = RiskDriftSnapshot["instruments"][number] & { name: string };
 
@@ -17,6 +19,7 @@ export function RiskDriftCard({
   instruments: NamedRiskDriftInstrument[];
 }) {
   const [open, setOpen] = useState(false);
+  useModalScrollLock(open);
   const closeModal = () => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setOpen(false);
@@ -83,7 +86,7 @@ export function RiskDriftCard({
               <small>σₚ / σₚ⁰</small>
               <strong>{ratio(drift.portfolio.ratio)}</strong>
             </div>
-            <button aria-label="关闭基准仓位漂移浮窗" type="button" onClick={closeModal}>×</button>
+            <button aria-label="关闭基准仓位漂移浮窗" type="button" onClick={closeModal}><X aria-hidden="true" size={16} strokeWidth={2} /></button>
           </div>
           <div className="risk-drift-modal-summary">
             <div><span>锚点组合波动率</span><strong>{percent(drift.portfolio.anchorVolatilityAnnualized)}</strong></div>

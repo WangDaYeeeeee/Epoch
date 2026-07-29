@@ -1,8 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { useModalScrollLock } from "@/components/use-modal-scroll-lock";
 
 type Weight = { instrumentId: string; name: string; weight: number };
 
@@ -23,6 +25,7 @@ export function TargetWeightAnchorForm({
   const router = useRouter();
   const [weights, setWeights] = useState(() => initialWeights.map((item) => ({ ...item })));
   const [open, setOpen] = useState(false);
+  useModalScrollLock(open);
   const [state, setState] = useState<{ pending: boolean; message: string; tone: "idle" | "success" | "error" }>({
     pending: false,
     message: "",
@@ -128,7 +131,7 @@ export function TargetWeightAnchorForm({
               <h3 id="anchor-modal-title">调整基准目标仓位</h3>
               <p>逐项维护全部持仓标的的长期目标权重；未分配部分视为现金。</p>
             </div>
-            <button aria-label="关闭基准仓位浮窗" disabled={state.pending} type="button" onClick={closeModal}>×</button>
+            <button aria-label="关闭基准仓位浮窗" disabled={state.pending} type="button" onClick={closeModal}><X aria-hidden="true" size={16} strokeWidth={2} /></button>
           </div>
           <div className="anchor-weight-grid">
             {weights.map((item, index) => (

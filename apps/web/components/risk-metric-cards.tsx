@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { RiskDriftCard, type NamedRiskDriftInstrument } from "@/components/risk-drift-card";
 import { TimeRangeScrubber } from "@/components/time-range-scrubber";
+import { useModalScrollLock } from "@/components/use-modal-scroll-lock";
 import type { RiskDriftSnapshot } from "@/lib/domain/risk-drift";
 import type { PortfolioRiskSnapshot } from "@/lib/types";
 
@@ -67,6 +69,7 @@ export function RiskMetricCards({
 }) {
   const [selected, setSelected] = useState<MetricKey | null>(null);
   const [range, setRange] = useState({ startIndex: 0, endIndex: 0 });
+  useModalScrollLock(selected !== null);
   const selectedDefinition = definitions.find((item) => item.key === selected);
   const selectedValue = selectedDefinition ? selectedDefinition.value(risk) : null;
   const selectedTone = selectedDefinition ? metricTone(selectedDefinition.key, selectedValue, risk) : "neutral";
@@ -129,7 +132,7 @@ export function RiskMetricCards({
         const color = toneColors[tone];
         const points = historyFor(definition);
         const description = definition.key === "volatility"
-          ? `持仓权重 × 60 日 OHLC · 卡口余量 ${formatPercent(risk.policyGate.limitAnnualized - risk.policyGate.observedAnnualized)}`
+          ? `持仓权重 × SHAR 日频预测 · 卡口余量 ${formatPercent(risk.policyGate.limitAnnualized - risk.policyGate.observedAnnualized)}`
           : definition.key === "stress"
             ? "相关系数非对角统一设为 0.90"
             : `${(risk.portfolio.cvarConfidence * 100).toFixed(0)}% 置信度 · 损失口径`;
@@ -198,7 +201,7 @@ export function RiskMetricCards({
               <small>当前</small>
               <strong>{formatPercent(selectedDefinition.value(risk) ?? 0)}</strong>
             </div>
-            <button aria-label="关闭风险趋势浮窗" type="button" onClick={closeModal}>×</button>
+            <button aria-label="关闭风险趋势浮窗" type="button" onClick={closeModal}><X aria-hidden="true" size={16} strokeWidth={2} /></button>
           </div>
           <div className="risk-detail-range">
             <span>{visibleRangeLabel}</span>
