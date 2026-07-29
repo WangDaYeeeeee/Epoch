@@ -318,29 +318,25 @@ button.risk-metric-card.tone-red:hover { border-color: rgba(240,122,137,.78); ba
 .risk-panel-title h2 { margin-bottom: 0; }
 .risk-guide-trigger {
   display: grid;
-  flex: 0 0 20px;
-  width: 20px;
-  height: 20px;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   place-items: center;
-  border: 1px solid rgba(169,155,255,.2);
-  border-radius: 6px;
-  background:
-    linear-gradient(145deg,rgba(255,255,255,.055),transparent 48%),
-    rgba(118,98,238,.075);
-  color: #a9a2c4;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.055),0 6px 16px rgba(2,1,12,.16);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #8f89a4;
   cursor: pointer;
-  backdrop-filter: blur(10px) saturate(115%);
-  -webkit-backdrop-filter: blur(10px) saturate(115%);
-  transition: color .16s ease,border-color .16s ease,background .16s ease;
+  transition: color .16s ease,background .16s ease,transform .16s ease;
 }
 .risk-guide-trigger:hover {
-  border-color: rgba(169,155,255,.38);
-  background:
-    linear-gradient(145deg,rgba(255,255,255,.075),transparent 48%),
-    rgba(118,98,238,.13);
-  color: #d8d4eb;
+  background: rgba(169,155,255,.08);
+  color: #c7bcff;
+}
+.risk-guide-trigger:active {
+  background: rgba(169,155,255,.13);
+  transform: scale(.94);
 }
 .risk-guide-trigger:focus-visible,
 .risk-guide-head>button:focus-visible {

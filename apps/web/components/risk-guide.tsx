@@ -112,7 +112,7 @@ export function RiskGuide() {
 
   return <>
     <button aria-label="打开风险指标说明" className="risk-guide-trigger" title="指标说明" type="button" onClick={() => setOpen(true)}>
-      <CircleHelp aria-hidden="true" size={12} strokeWidth={1.9} />
+      <CircleHelp aria-hidden="true" size={14} strokeWidth={1.8} />
     </button>
     {open && createPortal((
       <div
