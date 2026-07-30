@@ -1,17 +1,17 @@
 import { createDatabaseClient, migrateDatabase } from "../lib/server/database";
-import { runMarketDataFreshnessMonitor } from "../lib/server/market-data-monitor";
-import { executeMarketRefresh, marketRefreshPreflight } from "../lib/server/market-refresh";
+import { currentFlexMarketInstrumentIds, executeMarketRefresh, marketRefreshPreflight } from "../lib/server/market-refresh";
+import { runMarketRefreshFollowUp } from "../lib/server/market-refresh-follow-up";
 import { PostgresMarketRefreshRunRepository } from "../lib/server/market-refresh-run";
 
 async function main(): Promise<void> {
-  const preflight = marketRefreshPreflight();
   const sql = createDatabaseClient();
   const connection = await sql.reserve();
   let locked = false;
   let runId: string | null = null;
   const repository = new PostgresMarketRefreshRunRepository(connection);
   try {
-    await migrateDatabase(connection);
+    await migrateDatabase(sql);
+    const preflight = marketRefreshPreflight(new Date(), await currentFlexMarketInstrumentIds(sql));
     const [lock] = await connection<{ acquired: boolean }[]>`
       SELECT pg_try_advisory_lock(hashtext('manual-market-refresh')) AS acquired
     `;
@@ -19,10 +19,10 @@ async function main(): Promise<void> {
     if (!locked) throw new Error("A market refresh is already running");
     const run = await repository.start(preflight);
     runId = run.id;
-    const result = await executeMarketRefresh();
-    await runMarketDataFreshnessMonitor(connection);
+    const result = await executeMarketRefresh(preflight);
+    const followUp = await runMarketRefreshFollowUp(sql);
     const completed = await repository.succeed(run.id, result);
-    console.log(JSON.stringify({ preflight, run: completed }, null, 2));
+    console.log(JSON.stringify({ preflight, run: completed, followUp }, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (runId) {

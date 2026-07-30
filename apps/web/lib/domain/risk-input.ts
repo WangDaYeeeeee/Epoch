@@ -153,15 +153,20 @@ function buildRiskInput(
   };
 }
 
-export function buildPortfolioRiskInput(positionRows: Row[], marketBarRows: Row[]): PortfolioRiskInput {
+export function buildPortfolioRiskInput(
+  positionRows: Row[],
+  marketBarRows: Row[],
+  portfolioNavUsdOverride?: number,
+): PortfolioRiskInput {
   const latestPositionDate = positionRows.map((row) => row.date).filter(Boolean).sort().at(-1);
   if (!latestPositionDate) throw new Error("Risk input requires a position snapshot");
   const currentRows = positionRows.filter((row) => row.date === latestPositionDate);
-  const portfolioNavUsd = currentRows.reduce((sum, row) => sum + usdValue(row), 0);
+  const portfolioNavUsd = portfolioNavUsdOverride
+    ?? currentRows.reduce((sum, row) => sum + usdValue(row), 0);
   const groupedPositions = new Map<string, Position>();
   for (const row of currentRows) {
     if (
-      ["cash", "other"].includes(row.category)
+      ["cash", "other", "option", "future"].includes(row.category)
       || row.instrument_id.startsWith("CASH:")
       || row.instrument_id.startsWith("ACCRUAL:")
       || CASH_EQUIVALENT_INSTRUMENTS.has(row.instrument_id)

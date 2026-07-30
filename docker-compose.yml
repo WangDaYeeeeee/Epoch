@@ -20,11 +20,22 @@ services:
     environment:
       DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
       EPOCH_DATA_ROOT: /data/satellite-data
-    command: ["sh", "-c", "pnpm db:migrate && pnpm baseline:import -- --optional"]
+      IBKR_FLEX_TOKEN: ${IBKR_FLEX_TOKEN:-}
+      IBKR_FLEX_QUERY_ID: ${IBKR_FLEX_QUERY_ID:-}
+      IBKR_FLEX_ACCOUNT_ID: ${IBKR_FLEX_ACCOUNT_ID:-ibkr_8602}
+      IBKR_FLEX_USER_AGENT: ${IBKR_FLEX_USER_AGENT:-Epoch owner@example.com}
+      IBKR_FLEX_REQUIRE_NAV: ${IBKR_FLEX_REQUIRE_NAV:-true}
+      IBKR_FLEX_REQUIRE_POSITIONS: ${IBKR_FLEX_REQUIRE_POSITIONS:-true}
+      IBKR_FLEX_STARTUP_MAX_AGE_HOURS: ${IBKR_FLEX_STARTUP_MAX_AGE_HOURS:-20}
+      IBKR_FLEX_POLL_INTERVAL_MS: ${IBKR_FLEX_POLL_INTERVAL_MS:-10000}
+      IBKR_FLEX_MAX_POLL_ATTEMPTS: ${IBKR_FLEX_MAX_POLL_ATTEMPTS:-8}
+    command: ["sh", "-c", "pnpm db:migrate && pnpm baseline:import -- --optional && pnpm daily:data:ensure"]
     volumes:
-      - ./tmp/satellite-data:/data/satellite-data:ro
+      - ./tmp/satellite-data:/data/satellite-data
+      - ./data/raw:/workspace/data/raw
     depends_on:
       postgres: { condition: service_healthy }
+      analytics: { condition: service_healthy }
 
   analytics:
     build:
@@ -64,8 +75,21 @@ services:
     environment:
       DATABASE_URL: postgresql://epoch:epoch-local-only@postgres:5432/epoch
       ANALYTICS_URL: http://analytics:8000
+      EPOCH_DATA_ROOT: /data/satellite-data
       SCHEDULER_POLL_MS: "30000"
+      IBKR_FLEX_TOKEN: ${IBKR_FLEX_TOKEN:-}
+      IBKR_FLEX_QUERY_ID: ${IBKR_FLEX_QUERY_ID:-}
+      IBKR_FLEX_ACCOUNT_ID: ${IBKR_FLEX_ACCOUNT_ID:-ibkr_8602}
+      IBKR_FLEX_USER_AGENT: ${IBKR_FLEX_USER_AGENT:-Epoch owner@example.com}
+      IBKR_FLEX_REQUIRE_NAV: ${IBKR_FLEX_REQUIRE_NAV:-true}
+      IBKR_FLEX_REQUIRE_POSITIONS: ${IBKR_FLEX_REQUIRE_POSITIONS:-true}
+      IBKR_FLEX_STARTUP_MAX_AGE_HOURS: ${IBKR_FLEX_STARTUP_MAX_AGE_HOURS:-20}
+      IBKR_FLEX_POLL_INTERVAL_MS: ${IBKR_FLEX_POLL_INTERVAL_MS:-10000}
+      IBKR_FLEX_MAX_POLL_ATTEMPTS: ${IBKR_FLEX_MAX_POLL_ATTEMPTS:-8}
     command: ["pnpm", "scheduler"]
+    volumes:
+      - ./data/raw:/workspace/data/raw
+      - ./tmp/satellite-data:/data/satellite-data
     depends_on:
       migrate: { condition: service_completed_successfully }
       analytics: { condition: service_healthy }

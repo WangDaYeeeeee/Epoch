@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
+import type { Sql } from "postgres";
 import { currentPositionMarketDataRequirement } from "../domain/market-data";
 import { parseCsv } from "./csv";
 import { resolveDataRoot } from "./portfolio";
@@ -13,6 +14,7 @@ export const MARKET_SYMBOLS: Record<string, string> = {
   "US:FNGU": "FNGU", "US:GLD": "GLD", "US:GLL": "GLL", "US:GOOGL": "GOOGL",
   "US:HOOD": "HOOD", "US:JEPI": "JEPI", "US:KLAC": "KLAC", "US:MSFT": "MSFT",
   "US:NASA": "NASA", "US:NVDA": "NVDA", "US:PSQ": "PSQ", "US:QQQ": "QQQ",
+  "US:MU": "MU",
   "US:SMH": "SMH", "US:SOXX": "SOXX", "US:SPMO": "SPMO", "US:SQQQ": "SQQQ",
   "US:TCOM": "TCOM", "US:TQQQ": "TQQQ", "US:TSLA": "TSLA", "US:TSM": "TSM",
   "US:UVIX": "UVIX", "XHKG:02259": "2259.HK", "XHKG:09992": "9992.HK",
@@ -60,12 +62,15 @@ export function buildMarketRefreshPreflight(input: {
       "The listed provider symbols and requested date range will be sent to public market-data endpoints.",
       "Only current-position securities and required FX pairs are requested; existing unrelated history is retained.",
       "Raw responses are retained by refresh run and normalized CSV files are merged by date and instrument.",
-      "No broker credentials, account identifiers, quantities, weights, or transaction history are transmitted.",
+      "The configured Flex token is sent only to IBKR; broker credentials and account data are never sent to public market-data providers.",
     ],
   };
 }
 
-export function marketRefreshPreflight(now = new Date()): MarketRefreshPreflight {
+export function marketRefreshPreflight(
+  now = new Date(),
+  additionalInstrumentIds: string[] = [],
+): MarketRefreshPreflight {
   const root = resolveDataRoot();
   if (!root) throw new Error("Private baseline data is unavailable");
   const positions = parseCsv(readFileSync(resolve(root, "normalized/positions.csv"), "utf8"));
@@ -73,6 +78,7 @@ export function marketRefreshPreflight(now = new Date()): MarketRefreshPreflight
   const instrumentIds = [
     ...requirement.canonicalInstrumentIds,
     ...requirement.fxPairs.map((pair) => `FX:${pair}`),
+    ...additionalInstrumentIds,
   ];
   const prices = parseCsv(readFileSync(resolve(root, "normalized/market-prices.csv"), "utf8"));
   const required = new Set(instrumentIds);
@@ -82,7 +88,29 @@ export function marketRefreshPreflight(now = new Date()): MarketRefreshPreflight
       latestDates[row.instrument_id] = row.date;
     }
   }
-  return buildMarketRefreshPreflight({ now, instrumentIds, latestDates });
+  return buildMarketRefreshPreflight({ now, instrumentIds: [...new Set(instrumentIds)], latestDates });
+}
+
+export async function currentFlexMarketInstrumentIds(sql: Sql): Promise<string[]> {
+  const accountId = process.env.IBKR_FLEX_ACCOUNT_ID?.trim() || "ibkr_8602";
+  const rows = await sql<{ ticker: string; category: string; currency: string }[]>`
+    SELECT ticker, category, currency
+    FROM reported_position_snapshot
+    WHERE account_id = ${accountId}
+      AND source LIKE 'ibkr_flex:%'
+      AND snapshot_date = (
+        SELECT max(snapshot_date)
+        FROM reported_position_snapshot
+        WHERE account_id = ${accountId} AND source LIKE 'ibkr_flex:%'
+      )
+  `;
+  return [...new Set(rows.flatMap((row) =>
+    row.currency === "USD"
+      && ["stock", "fund"].includes(row.category)
+      && /^[A-Z0-9.-]+$/.test(row.ticker)
+      ? [`US:${row.ticker}`]
+      : [],
+  ))].sort();
 }
 
 export function confirmsMarketRefresh(body: unknown, preflight: MarketRefreshPreflight): boolean {
@@ -168,12 +196,15 @@ export function validateIncrementalMarketRefresh(input: {
 
 const execFileAsync = promisify(execFile);
 
-export async function executeMarketRefresh(): Promise<Record<string, unknown>> {
+export async function executeMarketRefresh(preflight?: MarketRefreshPreflight): Promise<Record<string, unknown>> {
   const workspaceRoot = resolveWorkspaceRoot();
   const script = resolve(workspaceRoot, "apps/web/scripts/fetch-market-data.ts");
   const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", script], {
     cwd: resolve(workspaceRoot, "apps/web"),
-    env: process.env,
+    env: {
+      ...process.env,
+      ...(preflight ? { MARKET_REFRESH_PREFLIGHT_JSON: JSON.stringify(preflight) } : {}),
+    },
     timeout: 180_000,
     maxBuffer: 1024 * 1024,
   });

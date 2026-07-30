@@ -4,6 +4,9 @@ import { calculateDemoLedger } from "./demo-ledger";
 import { runMarketDataFreshnessMonitor } from "./market-data-monitor";
 import { runPortfolioRiskIfChanged } from "./portfolio-risk-runner";
 import { PostgresQualityMetricsRepository } from "./quality-metrics";
+import { runIbkrFlexSync } from "./ibkr-flex-sync";
+import { runNasdaq100BenchmarkSync } from "./benchmark-sync";
+import { runDailyDataRefresh } from "./daily-data-refresh";
 
 type ScheduledJob = { id: string; handler: string; interval_seconds: number };
 type JobStatus = "succeeded" | "failed" | "skipped";
@@ -27,12 +30,18 @@ async function runDemoLedgerCalculation(sql: Sql): Promise<void> {
 }
 
 const handlers: Record<string, (sql: Sql) => Promise<"succeeded" | "skipped" | void>> = {
-  "demo-ledger-recalculation": runDemoLedgerCalculation,
+  "demo-ledger-recalculation": async (sql) => {
+    if (process.env.NODE_ENV === "production") return "skipped";
+    await runDemoLedgerCalculation(sql);
+  },
   "market-data-freshness-monitor": runMarketDataFreshnessMonitor,
   "portfolio-risk-refresh": runPortfolioRiskIfChanged,
   "quality-metrics-refresh": async (sql) => {
     await new PostgresQualityMetricsRepository(sql).evaluateMaturedForecasts();
   },
+  "ibkr-flex-sync": async (sql) => (await runIbkrFlexSync(sql)).status,
+  "nasdaq100-benchmark-sync": async (sql) => (await runNasdaq100BenchmarkSync(sql)).status,
+  "daily-data-refresh": async (sql) => (await runDailyDataRefresh(sql, { trigger: "scheduled" })).status,
 };
 
 async function resolveJobAlerts(sql: Sql, jobId: string): Promise<void> {
@@ -77,7 +86,11 @@ export async function runDueJobs(sql: Sql): Promise<Array<{ id: string; status: 
       const handler = handlers[job.handler];
       if (!handler) throw new Error(`Unknown scheduled job handler: ${job.handler}`);
       await connection`UPDATE scheduled_job SET last_started_at = now(), updated_at = now() WHERE id = ${job.id}`;
-      const outcome = await handler(connection);
+      // Keep the advisory lock on its dedicated reserved connection, but run
+      // the handler through the pool. Reserved postgres.js connections do not
+      // expose transaction helpers at runtime, while import handlers need
+      // sql.begin() for atomic persistence.
+      const outcome = await handler(sql);
       const status = outcome ?? "succeeded";
       await resolveJobAlerts(connection, job.id);
       await connection`

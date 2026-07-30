@@ -42,8 +42,8 @@ export function MarketRefreshControl() {
   const refresh = async () => {
     if (!preflight || !confirmed) return;
     const providerCount = new Set(preflight.targets.map((target) => target.provider)).size;
-    if (!window.confirm(`将向 ${providerCount} 个公开行情来源发送 ${preflight.targets.length} 个来源标识并更新本地行情文件。确认继续吗？`)) return;
-    setState({ pending: true, tone: "idle", message: "正在获取、校验并标准化行情，可能需要约一分钟…" });
+    if (!window.confirm(`将调用已配置的 IBKR Flex，并向 ${providerCount} 个公开行情来源发送 ${preflight.targets.length} 个来源标识。确认继续吗？`)) return;
+    setState({ pending: true, tone: "idle", message: "正在刷新账户净值、基准和持仓行情，可能需要约一分钟…" });
     try {
       const response = await fetch("/api/v1/market-data/refresh", {
         method: "POST",
@@ -52,7 +52,17 @@ export function MarketRefreshControl() {
       });
       const payload = await response.json() as {
         detail?: string;
-        result?: { observedAt?: string };
+        result?: {
+          observedAt?: string;
+          account?: {
+            status?: string;
+            latestNavDate?: string;
+            latestPositionDate?: string;
+            positionSnapshotsInserted?: number;
+            reason?: string;
+          };
+          benchmark?: { status?: string; latestObservationDate?: string; reason?: string };
+        };
         run?: NonNullable<typeof latestRun>;
       };
       if (!response.ok) throw new Error(payload.detail ?? "行情刷新失败");
@@ -60,7 +70,18 @@ export function MarketRefreshControl() {
       setState({
         pending: false,
         tone: "success",
-        message: `行情刷新完成${payload.result?.observedAt ? ` · ${payload.result.observedAt}` : ""}；风险任务将在检测到新输入后重算。`,
+        message: [
+          "日频数据刷新完成",
+          payload.result?.account?.latestNavDate
+            ? `IBKR NAV ${payload.result.account.latestNavDate}`
+            : `IBKR ${payload.result?.account?.reason ?? "未返回新快照"}`,
+          payload.result?.account?.latestPositionDate
+            ? `持仓 ${payload.result.account.latestPositionDate}`
+            : "持仓未返回",
+          payload.result?.benchmark?.latestObservationDate
+            ? `.NDX ${payload.result.benchmark.latestObservationDate}`
+            : `.NDX ${payload.result?.benchmark?.reason ?? "未返回新行情"}`,
+        ].join(" · "),
       });
       setConfirmed(false);
       router.refresh();
@@ -72,7 +93,7 @@ export function MarketRefreshControl() {
   return (
     <section className="market-refresh-control">
       <div className="risk-action-head">
-        <div><h3>人工刷新日频行情</h3><p>先预检外发范围；不会发送账户、仓位数量、权重或交易记录。</p></div>
+        <div><h3>人工刷新日频数据</h3><p>刷新 IBKR 账户净值、.NDX 基准以及持仓与汇率日线。</p></div>
         <button className="text-button" type="button" onClick={() => setExpanded((value) => !value)}>
           {expanded ? "收起预检" : "查看预检"}
         </button>
@@ -88,7 +109,7 @@ export function MarketRefreshControl() {
       )}
       <label className="anchor-confirm">
         <input type="checkbox" checked={confirmed} disabled={!preflight || state.pending} onChange={(event) => setConfirmed(event.target.checked)} />
-        <span>我确认将上述来源标识和日期范围发送给公开行情 Provider</span>
+        <span>我确认调用已配置的 IBKR Flex，并将上述来源标识和日期范围发送给公开行情 Provider</span>
       </label>
       <div className="risk-action-footer">
         <span>{preflight ? `预检指纹 ${preflight.fingerprint.slice(0, 12)}` : "正在加载预检…"}</span>

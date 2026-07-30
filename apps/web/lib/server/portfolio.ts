@@ -11,7 +11,7 @@ import { PostgresDecisionJournalRepository } from "./decision-journal";
 import { discoverHeldFunds, holdingsClassifications, selectFundHoldingsSnapshot } from "../domain/fund-holdings";
 import { INSTRUMENT_CLASSIFICATION_VERSION, instrumentClassifications } from "../domain/instrument-classifications";
 import { calculateMoneyWeightedReturn, performanceCashFlows } from "../domain/performance";
-import { marketDataRequirement } from "../domain/market-data";
+import { canonicalBrokerPositionInstrumentId, marketDataRequirement } from "../domain/market-data";
 import { loadBaselineDataset, reconcileEventCoverage, reconcilePerformanceReturns, reconcilePositionQuantities, reconcileReportedValuations, type EventCoverage, type PositionReconciliation, type ValuationCoverage } from "./baseline-data";
 import { parseCsv } from "./csv";
 import { createDatabaseClient } from "./database";
@@ -23,11 +23,66 @@ import { PostgresOperationsRepository } from "./operations";
 import { PostgresQualityMetricsRepository } from "./quality-metrics";
 import { PostgresDataSourceHealthRepository } from "./data-source-health";
 import { PostgresMarketSignalRepository } from "./market-signal";
+import { existingDataRoot } from "./data-root";
 
 type Row = Record<string, string>;
 type PrivatePortfolioRows = { performance: Row[]; transactions: Row[]; positions: Row[] };
 const readRows = (path: string) => parseCsv(readFileSync(path, "utf8"));
 const actionNames: Record<string, string> = { buy: "买入", sell: "卖出", deposit: "入金", withdrawal: "出金", transfer_in: "转入", transfer_out: "转出", adjustment_in: "资产调增", adjustment_out: "资产调减" };
+
+export function appendFlexPerformanceRows(
+  baseline: Row[],
+  navRows: Array<{ date: string; nav: string; cash: string | null }>,
+  externalFlows: Array<{ date: string; amountBase: string }>,
+  benchmarkObservations: Array<{ date: string; close: string }> = [],
+): Row[] {
+  const performance = [...baseline].sort((left, right) => left.date.localeCompare(right.date));
+  if (!performance.length) return performance;
+  const latestBaseline = performance.at(-1)!;
+  let previousDate = latestBaseline.date;
+  let previousAssets = Number(latestBaseline.total_assets);
+  let linkedNav = Number(latestBaseline.nav);
+  const sortedBenchmark = [...benchmarkObservations].sort((left, right) => left.date.localeCompare(right.date));
+  let previousBenchmark = sortedBenchmark.filter((row) => row.date <= previousDate).at(-1);
+  for (const snapshot of [...navRows].sort((left, right) => left.date.localeCompare(right.date))) {
+    if (snapshot.date <= previousDate) continue;
+    const currentAssets = Number(snapshot.nav);
+    const netExternalFlow = externalFlows
+      .filter((flow) => flow.date > previousDate && flow.date <= snapshot.date)
+      .reduce((sum, flow) => sum + Number(flow.amountBase), 0);
+    if (!(previousAssets > 0) || !Number.isFinite(currentAssets) || !Number.isFinite(netExternalFlow)) {
+      throw new Error(`Cannot extend Flex performance through ${snapshot.date}`);
+    }
+    // Flex cash movements do not expose intraday timing. Treat external flows
+    // as end-of-period so deposits and withdrawals are excluded from P/L
+    // without inventing an unsupported time weight.
+    const periodReturn = (currentAssets - netExternalFlow) / previousAssets - 1;
+    const currentBenchmark = sortedBenchmark.filter((row) => row.date <= snapshot.date).at(-1);
+    const benchmarkReturn = currentBenchmark && previousBenchmark
+      && currentBenchmark.date > previousDate
+      ? Number(currentBenchmark.close) / Number(previousBenchmark.close) - 1
+      : null;
+    linkedNav *= 1 + periodReturn;
+    performance.push({
+      date: snapshot.date,
+      portfolio_id: latestBaseline.portfolio_id,
+      total_assets: String(currentAssets),
+      cash: snapshot.cash ?? "",
+      net_external_flow: String(netExternalFlow),
+      currency: latestBaseline.currency,
+      nav: String(linkedNav),
+      period_return: String(periodReturn),
+      benchmark: latestBaseline.benchmark,
+      benchmark_return: benchmarkReturn == null ? "" : String(benchmarkReturn),
+      source: "ibkr_flex:linked_nav",
+      external_flow_weight: netExternalFlow ? "0" : "",
+    });
+    previousDate = snapshot.date;
+    previousAssets = currentAssets;
+    if (currentBenchmark) previousBenchmark = currentBenchmark;
+  }
+  return performance;
+}
 
 function riskSnapshot(record: CalculationRunRecord, dataStatus: "fresh" | "stale"): PortfolioPayload["risk"] {
   if (!record.response || !["succeeded", "degraded"].includes(record.response.status)) return undefined;
@@ -67,9 +122,7 @@ function riskSnapshot(record: CalculationRunRecord, dataStatus: "fresh" | "stale
 }
 
 export function resolveDataRoot(): string | null {
-  if (process.env.EPOCH_DATA_ROOT && existsSync(resolve(process.env.EPOCH_DATA_ROOT, "validation.json"))) return process.env.EPOCH_DATA_ROOT;
-  const candidates = [resolve(process.cwd(), "tmp/satellite-data"), resolve(process.cwd(), "../../tmp/satellite-data")];
-  return candidates.find((candidate) => existsSync(resolve(candidate, "validation.json"))) ?? null;
+  return existingDataRoot();
 }
 
 export function loadPortfolio(root = resolveDataRoot()): PortfolioPayload {
@@ -154,8 +207,12 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
     const type = actions.some((action) => action.startsWith("transfer")) ? "transfer_in" : actions.some((action) => ["deposit", "withdrawal"].includes(action)) ? "deposit" : actions.includes("sell") ? "sell" : "buy";
     return { date: event.date, type, label: `${actions.map((action) => actionNames[action]).join("/")} · ${symbols.slice(0, 3).join("、")}${symbols.length > 3 ? " 等" : ""}`, details: event.details };
   });
-  const latestPositionDate = positions.map((row) => row.date).sort().at(-1) ?? "";
-  const currentRows = positions.filter((row) => row.date === latestPositionDate);
+  const latestPositionDateByAccount = new Map<string, string>();
+  for (const row of positions) {
+    const current = latestPositionDateByAccount.get(row.account_id) ?? "";
+    if (row.date > current) latestPositionDateByAccount.set(row.account_id, row.date);
+  }
+  const currentRows = positions.filter((row) => row.date === latestPositionDateByAccount.get(row.account_id));
   const first = series[0], latest = series.at(-1)!;
   const usdValue = currentRows.filter((row) => row.currency === "USD").reduce((sum, row) => sum + Number(row.market_value), 0);
   const foreignCurrencies = new Set(currentRows.filter((row) => row.currency !== "USD").map((row) => row.currency));
@@ -211,7 +268,7 @@ function buildPrivatePortfolio({ performance, transactions, positions }: Private
 
 export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayload | null> {
   const payload = await sql.begin(async (transaction) => {
-    const performance = await transaction<Row[]>`
+    const baselinePerformance = await transaction<Row[]>`
       SELECT snapshot_date::text AS date, portfolio_id, total_assets::text, COALESCE(cash::text, '') AS cash,
              net_external_flow::text, currency, nav::text, COALESCE(period_return::text, '') AS period_return,
              benchmark, COALESCE(benchmark_return::text, '') AS benchmark_return, source,
@@ -224,7 +281,7 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
       )
       ORDER BY snapshot_date
     `;
-    if (!performance.length) return null;
+    if (!baselinePerformance.length) return null;
     const transactions = await transaction<Row[]>`
       SELECT transaction_id, effective_date::text AS date, account_id, COALESCE(instrument_id, '') AS instrument_id,
              action, COALESCE(quantity::text, '') AS quantity, COALESCE(price::text, '') AS price, currency,
@@ -238,7 +295,7 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
       )
       ORDER BY effective_date, transaction_id
     `;
-    const positions = await transaction<Row[]>`
+    const baselinePositions = await transaction<Row[]>`
       SELECT snapshot_date::text AS date, account_id, instrument_id, ticker, name, category,
              quantity::text, price::text, market_value::text, currency, COALESCE(cost_basis::text, '') AS cost_basis,
              COALESCE(fx_to_cny::text, '') AS fx_to_cny, COALESCE(market_value_cny::text, '') AS market_value_cny,
@@ -252,6 +309,83 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
       )
       ORDER BY snapshot_date, account_id, instrument_id
     `;
+    const flexAccountId = process.env.IBKR_FLEX_ACCOUNT_ID?.trim() || "ibkr_8602";
+    const flexPositionRows = await transaction<Row[]>`
+      SELECT snapshot_date::text AS date, account_id, instrument_id, ticker, name, category,
+             quantity::text, price::text, market_value::text, currency, COALESCE(cost_basis::text, '') AS cost_basis,
+             COALESCE(fx_to_cny::text, '') AS fx_to_cny, COALESCE(market_value_cny::text, '') AS market_value_cny,
+             COALESCE(base_currency, '') AS base_currency, COALESCE(fx_to_base::text, '') AS fx_to_base,
+             COALESCE(market_value_base::text, '') AS market_value_base, source
+      FROM reported_position_snapshot
+      WHERE account_id = ${flexAccountId}
+        AND source LIKE 'ibkr_flex:%'
+        AND snapshot_date = (
+          SELECT max(snapshot_date)
+          FROM reported_position_snapshot
+          WHERE account_id = ${flexAccountId} AND source LIKE 'ibkr_flex:%'
+        )
+      ORDER BY instrument_id
+    `;
+    const positions = flexPositionRows.length
+      ? [...baselinePositions.filter((row) => row.account_id !== flexAccountId), ...flexPositionRows]
+      : baselinePositions;
+    const flexNavRows = await transaction<{ date: string; nav: string; cash: string | null }[]>`
+      SELECT DISTINCT ON (snapshot_date)
+             snapshot_date::text AS date, nav::text, cash::text
+      FROM ibkr_account_nav_snapshot
+      WHERE account_id = ${flexAccountId}
+      ORDER BY snapshot_date, observed_at DESC
+    `;
+    const flexExternalFlowRows = await transaction<{
+      date: string;
+      amount_base: string | null;
+      missing_fx: boolean;
+    }[]>`
+      SELECT cf.effective_at::date::text AS date,
+             sum(
+               (cf.amount_minor::numeric / 100)
+               * CASE
+                   WHEN cf.currency = account.base_currency THEN 1
+                   ELSE cf.fx_rate_to_base
+                 END
+             )::text AS amount_base,
+             bool_or(cf.currency <> account.base_currency AND cf.fx_rate_to_base IS NULL) AS missing_fx
+      FROM cash_flow cf
+      JOIN raw_import ON raw_import.id = cf.raw_import_id
+      JOIN account ON account.id = cf.account_id
+      WHERE cf.account_id = ${flexAccountId}
+        AND cf.kind IN ('deposit', 'withdrawal')
+        AND raw_import.source = 'ibkr_flex'
+        AND raw_import.source_id LIKE 'query-%'
+      GROUP BY cf.effective_at::date
+      ORDER BY cf.effective_at::date
+    `;
+    const benchmarkRows = await transaction<{ date: string; close: string }[]>`
+      SELECT effective_date::text AS date, close::text
+      FROM benchmark_observation
+      WHERE benchmark_id = '.NDX' AND source = 'fred:NASDAQ100'
+        AND effective_date >= (
+          SELECT max(snapshot_date) - interval '14 days'
+          FROM reported_performance_snapshot
+          WHERE raw_import_id = (
+            SELECT id FROM raw_import
+            WHERE source = 'normalized_satellite_baseline' AND source_id = 'normalized/performance.csv'
+            ORDER BY recorded_at DESC, id DESC LIMIT 1
+          )
+        )
+      ORDER BY effective_date
+    `;
+    const missingFlowFx = flexExternalFlowRows.find((row) => row.missing_fx);
+    if (missingFlowFx) throw new Error(`IBKR Flex external flow lacks base FX on ${missingFlowFx.date}`);
+    const performance = appendFlexPerformanceRows(
+      baselinePerformance,
+      flexNavRows,
+      flexExternalFlowRows.flatMap((row) => row.amount_base == null ? [] : [{
+        date: row.date,
+        amountBase: row.amount_base,
+      }]),
+      benchmarkRows,
+    );
     const positionReconciliation = reconcilePositionQuantities(transactions, positions);
     const performanceReconciliation = reconcilePerformanceReturns(performance);
     const eventCoverage = reconcileEventCoverage(transactions);
@@ -260,7 +394,12 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     const dataRoot = resolveDataRoot();
     const stagedBaseline = dataRoot ? loadBaselineDataset(dataRoot) : null;
     const latestPositionDate = positions.map((row) => row.date).sort().at(-1) ?? "";
-    const currentPositionRows = positions.filter((row) => row.date === latestPositionDate);
+    const latestPositionDateByAccount = new Map<string, string>();
+    for (const row of positions) {
+      const current = latestPositionDateByAccount.get(row.account_id) ?? "";
+      if (row.date > current) latestPositionDateByAccount.set(row.account_id, row.date);
+    }
+    const currentPositionRows = positions.filter((row) => row.date === latestPositionDateByAccount.get(row.account_id));
     const heldFunds = discoverHeldFunds(currentPositionRows.map((row) => ({
       instrumentId: row.instrument_id,
       assetClass: row.category,
@@ -297,6 +436,39 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     }, holdingsClassifications(fundSelections, instrumentClassifications));
   });
   if (!payload) return null;
+  const flexAccountId = process.env.IBKR_FLEX_ACCOUNT_ID?.trim() || "ibkr_8602";
+  const [flexNav] = await sql<{
+    snapshot_date: string;
+    nav: string;
+    cash: string | null;
+    currency: string;
+    observed_at: string;
+  }[]>`
+    SELECT snapshot_date::text, nav::text, cash::text, currency, observed_at::text
+    FROM ibkr_account_nav_snapshot
+    WHERE account_id = ${flexAccountId}
+    ORDER BY snapshot_date DESC, observed_at DESC
+    LIMIT 1
+  `;
+  const synchronizedPayload: PortfolioPayload = flexNav && flexNav.snapshot_date >= payload.meta.asOf
+    ? {
+        ...payload,
+        meta: {
+          ...payload.meta,
+          asOf: flexNav.snapshot_date,
+          baseCurrency: flexNav.currency,
+        },
+        summary: {
+          ...payload.summary,
+          nav: Number(flexNav.nav),
+          ...(flexNav.cash == null ? {} : { cash: Number(flexNav.cash) }),
+        },
+        health: {
+          ...payload.health,
+          message: `${payload.health.message}；IBKR Flex 已将账户净值同步至 ${flexNav.snapshot_date}`,
+        },
+      }
+    : payload;
   const alertRows = await sql<{
     id: string;
     source: string;
@@ -337,15 +509,26 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     new PostgresDataSourceHealthRepository(sql).load(),
     new PostgresMarketSignalRepository(sql).coverage(),
   ]);
-  const dataStatus = payload.health.marketDataFreshness?.status === "fresh" ? "fresh" : "stale";
+  const dataStatus = synchronizedPayload.health.marketDataFreshness?.status === "fresh" ? "fresh" : "stale";
   const riskHistory = riskRuns
     .map((record) => riskSnapshot(record, dataStatus))
     .filter((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot != null)
     .reverse();
   const latestRisk = riskRuns[0];
-  const latestRiskSnapshot = latestRisk
+  const candidateRiskSnapshot = latestRisk
     ? riskSnapshot(latestRisk, dataStatus)
     : undefined;
+  const currentRiskInstrumentIds = new Set(synchronizedPayload.positions.flatMap((position) =>
+    ["cash", "other", "option", "future"].includes(position.assetClass)
+      ? []
+      : [canonicalBrokerPositionInstrumentId(position)],
+  ));
+  const calculatedRiskInstrumentIds = new Set(
+    candidateRiskSnapshot?.instruments.map((instrument) => instrument.instrumentId) ?? [],
+  );
+  const riskMatchesCurrentPositions = currentRiskInstrumentIds.size === calculatedRiskInstrumentIds.size
+    && [...currentRiskInstrumentIds].every((instrumentId) => calculatedRiskInstrumentIds.has(instrumentId));
+  const latestRiskSnapshot = riskMatchesCurrentPositions ? candidateRiskSnapshot : undefined;
   const riskScenarios = scenarioRuns
     .map((record) => riskSnapshot(record, dataStatus))
     .filter((scenario): scenario is NonNullable<typeof scenario> => scenario != null);
@@ -357,9 +540,9 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     })
     : undefined;
   return {
-    ...payload,
+    ...synchronizedPayload,
     health: {
-      ...payload.health,
+      ...synchronizedPayload.health,
       ...(operationalAlerts.length ? { operationalAlerts } : {}),
     },
     ...(latestRiskSnapshot ? { risk: latestRiskSnapshot } : {}),
@@ -370,9 +553,9 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     ...(journal.length ? { journal } : {}),
     quality: { ...quality, dataSources, signalCoverage } as unknown as PortfolioPayload["quality"],
     operations: mergeOperationItems(buildOperationsSnapshot({
-      ...payload,
+      ...synchronizedPayload,
       health: {
-        ...payload.health,
+        ...synchronizedPayload.health,
         ...(operationalAlerts.length ? { operationalAlerts } : {}),
       },
       ...(latestRiskSnapshot ? { risk: latestRiskSnapshot } : {}),
@@ -385,8 +568,16 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
 export async function loadPortfolioPreferDatabase(): Promise<PortfolioPayload> {
   const sql = createDatabaseClient();
   let payload: PortfolioPayload;
+  let flexSyncSucceeded = false;
   try {
     payload = await loadPortfolioFromDatabase(sql) ?? loadPortfolio();
+    const [latestFlexRun] = await sql<{ succeeded: boolean }[]>`
+      SELECT status = 'succeeded' AS succeeded
+      FROM ibkr_flex_sync_run
+      ORDER BY requested_at DESC
+      LIMIT 1
+    `;
+    flexSyncSucceeded = latestFlexRun?.succeeded === true;
   } catch {
     const fallback = loadPortfolio();
     payload = {
@@ -400,7 +591,15 @@ export async function loadPortfolioPreferDatabase(): Promise<PortfolioPayload> {
   } finally {
     await sql.end();
   }
-  const brokerConnection = await checkIbkrReadOnlyConnection({ baseUrl: process.env.IBKR_WEB_API_URL });
+  const webConnection = await checkIbkrReadOnlyConnection({ baseUrl: process.env.IBKR_WEB_API_URL });
+  const brokerConnection = webConnection.status === "not_configured" && flexSyncSucceeded
+    ? {
+        ...webConnection,
+        status: "connected" as const,
+        endpoint: "IBKR Flex Web Service",
+        reason: "IBKR Flex Web Service is configured for scheduled read-only statement synchronization.",
+      }
+    : webConnection;
   const withBrokerConnection = {
     ...payload,
     health: {

@@ -3,14 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { RiskDriftCard, type NamedRiskDriftInstrument } from "@/components/risk-drift-card";
 import { TimeRangeScrubber } from "@/components/time-range-scrubber";
 import { useModalScrollLock } from "@/components/use-modal-scroll-lock";
 import type { RiskDriftSnapshot } from "@/lib/domain/risk-drift";
 import type { PortfolioRiskSnapshot } from "@/lib/types";
 
-type MetricKey = "volatility" | "stress" | "cvar";
+type MetricKey = "volatility" | "cvar";
 type MetricDefinition = {
   key: MetricKey;
   label: string;
@@ -18,8 +18,7 @@ type MetricDefinition = {
 };
 
 const definitions: MetricDefinition[] = [
-  { key: "volatility", label: "组合 σₚ", value: (point) => point.portfolio.volatilityAnnualized },
-  { key: "stress", label: "Stress σₚ", value: (point) => point.portfolio.stressVolatilityAnnualized },
+  { key: "volatility", label: "组合 / Stress σₚ", value: (point) => point.portfolio.volatilityAnnualized },
   { key: "cvar", label: "历史 CVaR", value: (point) => point.portfolio.historicalCvarLoss },
 ];
 type RiskTone = "green" | "yellow" | "red" | "neutral";
@@ -35,11 +34,11 @@ const metricTone = (key: MetricKey, value: number | null, risk: PortfolioRiskSna
     const ratio = value / risk.policyGate.limitAnnualized;
     return ratio > 1 ? "red" : ratio > 0.8 ? "yellow" : "green";
   }
-  if (key === "stress") {
-    const ratio = value / risk.policyGate.limitAnnualized;
-    return ratio > 1.25 ? "red" : ratio > 1 ? "yellow" : "green";
-  }
   return value > 0.05 ? "red" : value > 0.03 ? "yellow" : "green";
+};
+const stressTone = (value: number, risk: PortfolioRiskSnapshot): RiskTone => {
+  const ratio = value / risk.policyGate.limitAnnualized;
+  return ratio > 1.25 ? "red" : ratio > 1 ? "yellow" : "green";
 };
 const formatPercent = (value: number) => `${(value * 100).toFixed(2)}%`;
 const defaultRange = (points: { date: string }[]) => {
@@ -74,6 +73,8 @@ export function RiskMetricCards({
   const selectedValue = selectedDefinition ? selectedDefinition.value(risk) : null;
   const selectedTone = selectedDefinition ? metricTone(selectedDefinition.key, selectedValue, risk) : "neutral";
   const selectedColor = toneColors[selectedTone];
+  const stressColor = toneColors[stressTone(risk.portfolio.stressVolatilityAnnualized, risk)];
+  const primarySeriesLabel = selectedDefinition?.key === "volatility" ? "组合 σₚ" : selectedDefinition?.label;
   const closeModal = () => {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setSelected(null);
@@ -98,6 +99,9 @@ export function RiskMetricCards({
       date: point.asOf.slice(0, 10),
       sequence: index + 1,
       value,
+      ...(definition.key === "volatility"
+        ? { stressValue: point.portfolio.stressVolatilityAnnualized }
+        : {}),
     }];
   });
   const selectedPoints = selectedDefinition ? historyFor(selectedDefinition) : [];
@@ -111,7 +115,7 @@ export function RiskMetricCards({
     const dateTo = visiblePoints.at(-1)!.date;
     const performanceWindow = performance.filter((point) => point.date >= dateFrom && point.date <= dateTo);
     const performanceBase = performanceWindow[0]?.portfolio;
-    const byDate = new Map<string, { date: string; portfolioReturn?: number; riskValue?: number }>();
+    const byDate = new Map<string, { date: string; portfolioReturn?: number; riskValue?: number; stressValue?: number }>();
     for (const point of performanceWindow) {
       byDate.set(point.date, {
         date: point.date,
@@ -119,7 +123,12 @@ export function RiskMetricCards({
       });
     }
     for (const point of visiblePoints) {
-      byDate.set(point.date, { ...byDate.get(point.date), date: point.date, riskValue: point.value });
+      byDate.set(point.date, {
+        ...byDate.get(point.date),
+        date: point.date,
+        riskValue: point.value,
+        ...("stressValue" in point ? { stressValue: point.stressValue } : {}),
+      });
     }
     return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
   }, [performance, visiblePoints]);
@@ -132,13 +141,11 @@ export function RiskMetricCards({
         const color = toneColors[tone];
         const points = historyFor(definition);
         const description = definition.key === "volatility"
-          ? `持仓权重 × SHAR 日频预测 · 卡口余量 ${formatPercent(risk.policyGate.limitAnnualized - risk.policyGate.observedAnnualized)}`
-          : definition.key === "stress"
-            ? "相关系数非对角统一设为 0.90"
-            : `${(risk.portfolio.cvarConfidence * 100).toFixed(0)}% 置信度 · 损失口径`;
+          ? "实线为组合 · 虚线为相关系数 0.90 压力值"
+          : `${(risk.portfolio.cvarConfidence * 100).toFixed(0)}% 置信度 · 损失口径`;
         return (
           <button
-            className={`risk-metric-card ${definition.key} tone-${tone}`}
+            className={`risk-metric-card ${definition.key} ${definition.key === "volatility" ? "combined-volatility" : ""} tone-${tone}`}
             key={definition.key}
             type="button"
             onClick={() => {
@@ -152,12 +159,17 @@ export function RiskMetricCards({
             </div>
             <div className="risk-metric-copy">
               <strong>{value == null ? "不可用" : formatPercent(value)}</strong>
+              {definition.key === "volatility" && (
+                <b className="risk-stress-value" style={{ color: stressColor }}>
+                  Stress {formatPercent(risk.portfolio.stressVolatilityAnnualized)}
+                </b>
+              )}
               <small>{description}</small>
             </div>
             <div className="risk-sparkline" aria-hidden="true">
               {points.length > 1 ? (
                 <ResponsiveContainer width="100%" height={62}>
-                  <AreaChart data={points}>
+                  <ComposedChart data={points}>
                     <defs>
                       <linearGradient id={`spark-${definition.key}`} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor={color} stopOpacity={0.3} />
@@ -173,7 +185,19 @@ export function RiskMetricCards({
                       dot={false}
                       isAnimationActive={false}
                     />
-                  </AreaChart>
+                    {definition.key === "volatility" && (
+                      <Line
+                        type="monotone"
+                        dataKey="stressValue"
+                        stroke={stressColor}
+                        strokeWidth={1.5}
+                        strokeDasharray="5 4"
+                        dot={false}
+                        connectNulls
+                        isAnimationActive={false}
+                      />
+                    )}
+                  </ComposedChart>
                 </ResponsiveContainer>
               ) : <span>暂无历史趋势</span>}
             </div>
@@ -206,7 +230,8 @@ export function RiskMetricCards({
           <div className="risk-detail-range">
             <span>{visibleRangeLabel}</span>
             <div className="risk-detail-series-key">
-              <small><i style={{ background: selectedColor }} />{selectedDefinition.label}</small>
+              <small><i style={{ background: selectedColor }} />{primarySeriesLabel}</small>
+              {selectedDefinition.key === "volatility" && <small><i style={{ background: stressColor }} />Stress σₚ</small>}
               <small><i className="portfolio" />组合净值区间表现</small>
             </div>
           </div>
@@ -258,7 +283,7 @@ export function RiskMetricCards({
                   yAxisId="risk"
                   type="monotone"
                   dataKey="riskValue"
-                  name={selectedDefinition.label}
+                  name={primarySeriesLabel}
                   stroke={selectedColor}
                   strokeWidth={2.8}
                   fill={`url(#risk-area-shadow-${selectedDefinition.key})`}
@@ -275,6 +300,21 @@ export function RiskMetricCards({
                   animationDuration={750}
                   animationEasing="ease-out"
                 />
+                {selectedDefinition.key === "volatility" && (
+                  <Line
+                    yAxisId="risk"
+                    type="monotone"
+                    dataKey="stressValue"
+                    name="Stress σₚ"
+                    stroke={stressColor}
+                    strokeWidth={2.4}
+                    strokeDasharray="7 5"
+                    dot={false}
+                    connectNulls
+                    animationDuration={750}
+                    animationEasing="ease-out"
+                  />
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           </div>

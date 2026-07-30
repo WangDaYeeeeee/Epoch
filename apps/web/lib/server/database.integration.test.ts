@@ -57,6 +57,24 @@ databaseDescribe("Phase 0 PostgreSQL integration", () => {
     expect(parameter.calibration_required).toBe(true);
   });
 
+  it("uses long-horizon fallback cadences for daily market data", async () => {
+    const jobs = await sql<{ id: string; interval_seconds: number }[]>`
+      SELECT id, interval_seconds
+      FROM scheduled_job
+      WHERE id IN (
+        'market-data-freshness-monitor',
+        'portfolio-risk-refresh',
+        'quality-metrics-refresh'
+      )
+      ORDER BY id
+    `;
+    expect(jobs).toEqual([
+      { id: "market-data-freshness-monitor", interval_seconds: 86400 },
+      { id: "portfolio-risk-refresh", interval_seconds: 86400 },
+      { id: "quality-metrics-refresh", interval_seconds: 604800 },
+    ]);
+  });
+
   it("claims and records a due deterministic calculation job", async () => {
     await sql`UPDATE scheduled_job SET next_run_at = now() WHERE id = 'demo-ledger-recalculation'`;
     expect(await runDueJobs(sql)).toContainEqual({ id: "demo-ledger-recalculation", status: "succeeded" });
@@ -173,12 +191,15 @@ databaseDescribe("Phase 0 PostgreSQL integration", () => {
 Trades,Data,USD,NVDA,NVIDIA CORP,${uniqueId},NASDAQ,trade-${uniqueId},20260720,1,172.25,-1.00,BUY
 Cash Transactions,Header,Currency,TransactionID,DateTime,Type,Description,Amount
 Cash Transactions,Data,USD,cash-${uniqueId},20260719,Deposits/Withdrawals,Deposit,1000.00
+Net Asset Value (NAV) Summary in Base,Header,Account ID,Report Date,Cash,Stock,Total
+Net Asset Value (NAV) Summary in Base,Data,ibkr_8602,20260720,1000.00,172.25,1172.25
 `;
     try {
       const first = await importIbkrFlexStatement(sql, { accountId: "ibkr_8602", sourceId: uniqueId, text: statement, rawRoot });
       const second = await importIbkrFlexStatement(sql, { accountId: "ibkr_8602", sourceId: uniqueId, text: statement, rawRoot });
       expect(first.duplicateStatement).toBe(false);
       expect(first.inserted).toEqual({ instruments: 1, trades: 1, cashFlows: 1 });
+      expect(first.navSnapshotsInserted).toBe(1);
       expect(second).toMatchObject({ rawImportId: first.rawImportId, duplicateStatement: true });
       expect(second.inserted).toEqual({ instruments: 0, trades: 0, cashFlows: 0 });
     } finally {

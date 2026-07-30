@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseCsv } from "../lib/server/csv";
+import { configuredDataRoot } from "../lib/server/data-root";
 import { marketRefreshPreflight, validateIncrementalMarketRefresh } from "../lib/server/market-refresh";
 
 type ChartResult = {
@@ -26,11 +27,13 @@ const isoDate = (timestamp: number) => new Date(timestamp * 1000).toISOString().
 async function main(): Promise<void> {
   const observedAt = new Date().toISOString();
   const runId = observedAt.replaceAll(/[:.]/g, "-");
-  const root = resolve(process.env.EPOCH_DATA_ROOT ?? resolve(process.cwd(), "../../tmp/satellite-data"));
+  const root = configuredDataRoot();
   const rawRoot = resolve(root, "raw/market-data");
   const runRoot = resolve(rawRoot, "runs", runId);
   const normalizedRoot = resolve(root, "normalized");
-  const preflight = marketRefreshPreflight(new Date(observedAt));
+  const preflight = process.env.MARKET_REFRESH_PREFLIGHT_JSON
+    ? JSON.parse(process.env.MARKET_REFRESH_PREFLIGHT_JSON) as ReturnType<typeof marketRefreshPreflight>
+    : marketRefreshPreflight(new Date(observedAt));
   await mkdir(runRoot, { recursive: true });
   await mkdir(normalizedRoot, { recursive: true });
 

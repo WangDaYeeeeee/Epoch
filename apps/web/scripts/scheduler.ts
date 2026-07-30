@@ -1,5 +1,8 @@
 import { createDatabaseClient, migrateDatabase } from "../lib/server/database";
+import { loadWorkspaceEnvironment } from "../lib/server/environment";
 import { runDueJobs } from "../lib/server/scheduler";
+
+loadWorkspaceEnvironment();
 
 const once = process.argv.includes("--once");
 const pollMilliseconds = Number(process.env.SCHEDULER_POLL_MS ?? 30_000);

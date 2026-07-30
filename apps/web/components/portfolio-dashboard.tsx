@@ -10,7 +10,7 @@ import { BriefcaseBusiness, Check, Home, Search, Settings } from "lucide-react";
 import type { PortfolioPayload } from "@/lib/types";
 import { loadPortfolioPreferDatabase } from "@/lib/server/portfolio";
 import { instrumentClassifications } from "@/lib/domain/instrument-classifications";
-import { CASH_EQUIVALENT_INSTRUMENTS, canonicalMarketInstrumentId, isDerivativeInstrumentId } from "@/lib/domain/market-data";
+import { CASH_EQUIVALENT_INSTRUMENTS, canonicalBrokerPositionInstrumentId, isDerivativeInstrumentId } from "@/lib/domain/market-data";
 
 export const dynamic = "force-dynamic";
 
@@ -31,12 +31,16 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
   const instrumentNames = new Map([
     ...instrumentClassifications.flatMap((item) => item.issuer ? [[item.instrumentId, item.issuer.name] as const] : []),
     ...data.positions.map((item) => [item.instrumentId, item.name ?? item.symbol] as const),
+    ...data.positions.map((item) => [
+      canonicalBrokerPositionInstrumentId(item),
+      item.name ?? item.symbol,
+    ] as const),
   ]);
   const instrumentName = (instrumentId: string) =>
     instrumentNames.get(instrumentId) || instrumentNameFallbacks.get(instrumentId) || "名称待补充";
-  const currentRiskPositionMap = new Map<string, { instrumentId: string; name: string; marketValue: number }>();
+  const currentRiskPositionMap = new Map<string, { instrumentId: string; symbol: string; name: string; marketValue: number }>();
   for (const position of data.positions) {
-    const instrumentId = canonicalMarketInstrumentId(position.instrumentId);
+    const instrumentId = canonicalBrokerPositionInstrumentId(position);
     if (
       CASH_EQUIVALENT_INSTRUMENTS.has(instrumentId)
       || isDerivativeInstrumentId(instrumentId)
@@ -45,6 +49,7 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
     const existing = currentRiskPositionMap.get(instrumentId);
     currentRiskPositionMap.set(instrumentId, {
       instrumentId,
+      symbol: position.symbol,
       name: position.name ?? existing?.name ?? instrumentName(instrumentId),
       marketValue: (existing?.marketValue ?? 0) + position.marketValue,
     });
@@ -251,6 +256,7 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
             <div className="risk-actions">
               <TargetWeightAnchorForm initialWeights={currentRiskPositions.map((item) => ({
                 instrumentId: item.instrumentId,
+                symbol: item.symbol,
                 name: item.name,
                 weight: data.riskDrift?.instruments.find((anchor) => anchor.instrumentId === item.instrumentId)?.anchorWeight
                   ?? item.marketValue / data.summary.nav,
@@ -272,6 +278,17 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
               diagnostics={data.risk.modelDiagnostics}
             />
             <p className="exposure-note">当前结果使用 SHAR 日频半方差近似、250 日样本相关性；IV 输入暂不可用，模型处于降级状态。{data.risk.dataStatus === "stale" ? "行情不是最新状态，不作为新的正式交易结论。" : ""}</p>
+          </article>
+        )}
+        {!data.risk && (
+          <article className="panel risk-panel view-section view-workbench" id="risk">
+            <div className="panel-head">
+              <div><div className="risk-panel-title"><h2>组合风险待刷新</h2><RiskGuide /></div>
+                <p>当前持仓已变化，旧风险批次已停止展示</p>
+              </div>
+              <span className="reconciliation-status pending">等待新批次</span>
+            </div>
+            <p className="exposure-note">请前往“系统”页面查看最新日频数据预检，确认刷新当前持仓行情后，系统会自动重算组合风险。</p>
           </article>
         )}
         <article className="panel chart-panel view-section view-portfolio">

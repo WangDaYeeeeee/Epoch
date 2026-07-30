@@ -6,7 +6,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useModalScrollLock } from "@/components/use-modal-scroll-lock";
 
-type Weight = { instrumentId: string; name: string; weight: number };
+type Weight = { instrumentId: string; symbol: string; name: string; weight: number };
 
 const errorMessage = (payload: unknown, fallback: string) => {
   if (typeof payload !== "object" || payload === null) return fallback;
@@ -32,6 +32,10 @@ export function TargetWeightAnchorForm({
     tone: "idle",
   });
   const total = useMemo(() => weights.reduce((sum, item) => sum + item.weight, 0), [weights]);
+  const instrumentLabel = (instrumentId: string) =>
+    initialWeights.find((item) => item.instrumentId === instrumentId)?.symbol
+    ?? instrumentId.split(":").at(-1)
+    ?? instrumentId;
   const anchorMismatch = useMemo(() => {
     if (!anchorInstrumentIds) return null;
     const current = new Set(initialWeights.map((item) => item.instrumentId));
@@ -102,9 +106,9 @@ export function TargetWeightAnchorForm({
         <strong>{weights.length} 个标的 · 合计 {(total * 100).toFixed(1)}%</strong>
         {anchorMismatch ? (
           <small className="anchor-mismatch-detail">
-            {anchorMismatch.added.length > 0 && <>新增 {anchorMismatch.added.join("、")}</>}
+            {anchorMismatch.added.length > 0 && <>新增 {anchorMismatch.added.map(instrumentLabel).join("、")}</>}
             {anchorMismatch.added.length > 0 && anchorMismatch.removed.length > 0 && <span> · </span>}
-            {anchorMismatch.removed.length > 0 && <>已退出 {anchorMismatch.removed.join("、")}</>}
+            {anchorMismatch.removed.length > 0 && <>已退出 {anchorMismatch.removed.map(instrumentLabel).join("、")}</>}
             <span>；请按最新实际持仓重新设置基准</span>
           </small>
         ) : <small>用于权重偏离与风险漂移比较</small>}
@@ -136,10 +140,10 @@ export function TargetWeightAnchorForm({
           <div className="anchor-weight-grid">
             {weights.map((item, index) => (
               <label key={item.instrumentId}>
-                <span className="anchor-instrument"><b>{item.instrumentId}</b><small>{item.name}</small></span>
+                <span className="anchor-instrument"><b>{item.symbol}</b><small>{item.name}</small></span>
                 <div>
                   <input
-                    aria-label={`${item.instrumentId} 基准目标仓位`}
+                    aria-label={`${item.symbol} 基准目标仓位`}
                     type="number"
                     min="0"
                     max="100"

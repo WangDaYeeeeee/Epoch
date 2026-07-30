@@ -42,6 +42,21 @@ export function canonicalMarketInstrumentId(instrumentId: string): string {
   return instrumentId;
 }
 
+export function canonicalBrokerPositionInstrumentId(position: {
+  instrumentId: string;
+  symbol: string;
+  currency: string;
+  assetClass: string;
+}): string {
+  if (
+    position.instrumentId.startsWith("IBKR:")
+    && position.currency === "USD"
+    && ["stock", "fund"].includes(position.assetClass)
+    && /^[A-Z0-9.-]+$/.test(position.symbol)
+  ) return `US:${position.symbol}`;
+  return canonicalMarketInstrumentId(position.instrumentId);
+}
+
 export function isDerivativeInstrumentId(instrumentId: string): boolean {
   return /:[A-Z0-9]+\d{6}[CP]\d+$/.test(instrumentId);
 }

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { createDatabaseClient } from "@/lib/server/database";
-import { runMarketDataFreshnessMonitor } from "@/lib/server/market-data-monitor";
-import { confirmsMarketRefresh, executeMarketRefresh, marketRefreshPreflight } from "@/lib/server/market-refresh";
+import { confirmsMarketRefresh, currentFlexMarketInstrumentIds, marketRefreshPreflight } from "@/lib/server/market-refresh";
 import { PostgresMarketRefreshRunRepository } from "@/lib/server/market-refresh-run";
+import { runDailyDataRefresh } from "@/lib/server/daily-data-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ export async function GET() {
   const sql = createDatabaseClient();
   try {
     return NextResponse.json({
-      preflight: marketRefreshPreflight(),
+      preflight: marketRefreshPreflight(new Date(), await currentFlexMarketInstrumentIds(sql)),
       latestRun: await new PostgresMarketRefreshRunRepository(sql).loadLatest(),
     });
   } finally {
@@ -25,8 +25,19 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "invalid_market_refresh", detail: "Invalid JSON request" }, { status: 422 });
   }
-  const preflight = marketRefreshPreflight();
+  const sql = createDatabaseClient();
+  let preflight: ReturnType<typeof marketRefreshPreflight>;
+  try {
+    preflight = marketRefreshPreflight(new Date(), await currentFlexMarketInstrumentIds(sql));
+  } catch (error) {
+    await sql.end();
+    return NextResponse.json({
+      error: "market_refresh_preflight_unavailable",
+      detail: error instanceof Error ? error.message : "unknown",
+    }, { status: 503 });
+  }
   if (!confirmsMarketRefresh(body, preflight)) {
+    await sql.end();
     return NextResponse.json({
       error: "market_refresh_confirmation_required",
       detail: "The exact current preflight fingerprint must be explicitly confirmed",
@@ -34,7 +45,6 @@ export async function POST(request: Request) {
     }, { status: 409 });
   }
 
-  const sql = createDatabaseClient();
   const connection = await sql.reserve();
   let locked = false;
   let runId: string | null = null;
@@ -47,10 +57,9 @@ export async function POST(request: Request) {
     if (!locked) return NextResponse.json({ error: "market_refresh_already_running" }, { status: 409 });
     const run = await repository.start(preflight);
     runId = run.id;
-    const result = await executeMarketRefresh();
-    await runMarketDataFreshnessMonitor(connection);
+    const result = await runDailyDataRefresh(sql, { preflight, trigger: "manual" });
     const completed = await repository.succeed(run.id, result);
-    return NextResponse.json({ status: "succeeded", result, run: completed });
+    return NextResponse.json({ status: "succeeded", result, run: completed, followUp: result.followUp });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
     if (runId) {

@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { configuredDataRoot } from "../lib/server/data-root";
 
 type Manifest = {
   observed_at?: string;
@@ -27,7 +28,7 @@ const csvCell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""'
 const isoDate = (timestamp: number) => new Date(timestamp * 1000).toISOString().slice(0, 10);
 
 async function main(): Promise<void> {
-  const root = resolve(process.env.EPOCH_DATA_ROOT ?? resolve(process.cwd(), "../../tmp/satellite-data"));
+  const root = configuredDataRoot();
   const rawRoot = resolve(root, "raw/market-data");
   const normalizedRoot = resolve(root, "normalized");
   const manifestPath = resolve(rawRoot, "manifest.json");

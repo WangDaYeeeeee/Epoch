@@ -64,6 +64,88 @@ pnpm import:flex -- --file /path/to/activity-statement.csv
 
 这条命令只用于未来追加新的 IBKR 数据，不用于重做现有历史基线。原始报表按 SHA-256 不可变保存到 `data/raw/ibkr-flex/`（不纳入 Git），交易和现金流水按 IBKR 外部标识幂等写入账本。默认账户为 `ibkr_8602`，可通过 `--account` 修改。
 
+### IBKR Flex 自动同步
+
+Epoch 支持通过只读的 IBKR Flex Web Service 每日同步账户报表，无需运行
+Client Portal Gateway 或 TWS。先在 IBKR Client Portal 的“报表 → Flex Queries”中：
+
+1. 启用 Flex Web Service，生成有效期合适的 Token；
+2. 新建 Activity Flex Query，输出格式选择 CSV；
+3. 只选择要映射到 `ibkr_8602` 的那个账户，并至少包含 `Trades`、`Cash Transactions`、
+   `Net Asset Value` 和 `Open Positions`；
+4. `Open Positions` 的 Level of Detail 选择 `Summary`，并勾选：
+   `Account ID`、`Currency`、`Asset Class`、`FX Rate to Base`、`Symbol`、
+   `Description`、`Conid`、`Report Date`、`Quantity`、`Mark Price`、
+   `Position Value`、`Cost Basis Money`；建议同时选择 `Listing Exchange`；
+5. 记下 Query ID。查询日期范围可以包含若干重叠日，导入按报表哈希及 IBKR 外部标识幂等处理。
+
+然后把凭证放进项目根目录中未提交的 `.env`（Scheduler 和手工同步命令会自动读取）：
+
+```bash
+IBKR_FLEX_TOKEN=...
+IBKR_FLEX_QUERY_ID=...
+IBKR_FLEX_ACCOUNT_ID=ibkr_8602
+IBKR_FLEX_USER_AGENT="Epoch your-email@example.com"
+IBKR_FLEX_STARTUP_MAX_AGE_HOURS=20
+```
+
+不要将 Token 写入仓库。可先手工验证一次：
+
+```bash
+pnpm ibkr:flex:sync
+```
+
+`pnpm dev:local` 与 Docker Compose 在启动 Web 前会运行统一的
+`pnpm daily:data:ensure`。它检查整条每日数据流水线最近一次成功时间：
+默认 20 小时内复用，超过阈值则依次完成 IBKR、`.NDX`、当前持仓行情以及
+风险/质量派生数据。任一步失败都会令本次流水线失败，不会把部分更新误报为完成。
+
+### `.NDX` 基准自动同步
+
+`.NDX` 不从 Activity Flex Query 读取。Epoch 使用与历史基线一致的 FRED
+`NASDAQ100` 每日收盘序列（原始来源为 Nasdaq），无需 API key：
+
+```bash
+pnpm benchmark:sync
+```
+
+`.NDX` 是统一每日流水线中的第二步，也可以使用 `pnpm benchmark:sync`
+单独诊断。统一流水线可在本地 `.env` 中调整：
+
+```dotenv
+NASDAQ100_SYNC_ENABLED=true
+FRED_TIMEOUT_MS=30000
+EPOCH_DAILY_DATA_SYNC_ENABLED=true
+EPOCH_DAILY_DATA_STARTUP_MAX_AGE_HOURS=20
+```
+
+FRED 与 IBKR 的发布时间可能相差一个交易日。Epoch 只采用实际已发布的指数收盘值，
+不会用未来值或代理 ETF 补齐缺失日。
+
+服务运行后，Scheduler 默认每天运行一次 `daily-data-refresh`。原先独立的
+`ibkr-flex-sync` 和 `nasdaq100-benchmark-sync` 定时任务会停用，避免彼此错位。
+Activity Statement 每日收盘后更新，
+因此更高频率不会带来更新鲜的账户净值。同步采用 IBKR 官方两步流程：
+先请求生成报表，再轮询取回；Token 不写入数据库、原始文件或错误日志。
+每次运行记录在 `ibkr_flex_sync_run`，净值快照记录在
+`ibkr_account_nav_snapshot`。失败会进入页面“数据健康”的开放告警，恢复后自动关闭。
+当新快照日期晚于历史基线时，页面顶部“组合净值”和数据截至日期使用最新 Flex NAV；
+TWR/MWR 曲线按 Flex NAV 与外部现金流续接，`.NDX` 同期曲线按 FRED
+`NASDAQ100` 收盘值续接。
+
+可手工运行同一条完整流水线：
+
+```bash
+pnpm daily:data:sync
+```
+
+每次运行记录在 `daily_data_refresh_run`，依次执行：
+
+1. IBKR Flex 交易、现金、NAV 与 Open Positions；
+2. FRED `NASDAQ100`；
+3. 根据刚入库的持仓重新生成公开行情目标并维护日线文件；
+4. 行情健康度、组合风险与质量评估。
+
 同步当前持有 ETF 的底层成分：
 
 ```bash

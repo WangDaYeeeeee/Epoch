@@ -9,6 +9,8 @@ export type FlexImportResult = {
   contentHash: string;
   duplicateStatement: boolean;
   inserted: { instruments: number; trades: number; cashFlows: number };
+  navSnapshotsInserted: number;
+  positionSnapshotsInserted: number;
 };
 
 function persistRawStatement(text: string, contentHash: string, rawRoot: string): string {
@@ -35,9 +37,19 @@ export async function importIbkrFlexStatement(sql: Sql, input: {
   text: string;
   observedAt?: Date;
   rawRoot?: string;
+  fallbackDate?: string;
 }): Promise<FlexImportResult> {
   if (!input.sourceId.trim()) throw new Error("IBKR Flex source id is required");
-  const parsed = parseIbkrFlexStatement(input.text);
+  const [accountConfiguration] = await sql<{ base_currency: string }[]>`
+    SELECT base_currency FROM account
+    WHERE id = ${input.accountId} AND provider = 'ibkr' AND is_read_only = true
+  `;
+  if (!accountConfiguration) throw new Error(`Unknown or non-read-only IBKR account: ${input.accountId}`);
+  const parsed = parseIbkrFlexStatement(input.text, {
+    accountId: input.accountId,
+    fallbackDate: input.fallbackDate,
+    baseCurrency: accountConfiguration.base_currency as "USD" | "KRW" | "HKD" | "CNY",
+  });
   const objectPath = persistRawStatement(input.text, parsed.contentHash, input.rawRoot ?? resolveRawDataRoot());
   const observedAt = input.observedAt ?? new Date();
 
@@ -67,6 +79,8 @@ export async function importIbkrFlexStatement(sql: Sql, input: {
         contentHash: parsed.contentHash,
         duplicateStatement: true,
         inserted: { instruments: 0, trades: 0, cashFlows: 0 },
+        navSnapshotsInserted: 0,
+        positionSnapshotsInserted: 0,
       };
     }
 
@@ -101,10 +115,11 @@ export async function importIbkrFlexStatement(sql: Sql, input: {
     for (const flow of parsed.cashFlows) {
       const rows = await transaction`
         INSERT INTO cash_flow (
-          external_id, account_id, effective_at, kind, amount_minor, currency, raw_import_id
+          external_id, account_id, effective_at, kind, amount_minor, currency,
+          fx_rate_to_base, raw_import_id
         ) VALUES (
           ${flow.externalId}, ${input.accountId}, ${flow.effectiveAt}, ${flow.kind},
-          ${flow.amountMinor}, ${flow.currency}, ${insertedRaw[0].id}
+          ${flow.amountMinor}, ${flow.currency}, ${flow.fxRateToBase}, ${insertedRaw[0].id}
         )
         ON CONFLICT (external_id) DO NOTHING
         RETURNING external_id
@@ -112,11 +127,52 @@ export async function importIbkrFlexStatement(sql: Sql, input: {
       insertedCashFlows += rows.length;
     }
 
+    let navSnapshotsInserted = 0;
+    const reportedNavAccounts = new Set(parsed.navSnapshots.map((snapshot) => snapshot.accountId));
+    if (reportedNavAccounts.size > 1) {
+      throw new Error("IBKR Flex import must contain exactly one account when Net Asset Value is enabled");
+    }
+    for (const snapshot of parsed.navSnapshots) {
+      const rows = await transaction`
+        INSERT INTO ibkr_account_nav_snapshot (
+          raw_import_id, account_id, snapshot_date, nav, cash, currency, source, observed_at
+        ) VALUES (
+          ${insertedRaw[0].id}, ${input.accountId}, ${snapshot.date}, ${snapshot.nav},
+          ${snapshot.cash}, ${snapshot.currency}, ${`ibkr_flex:${input.sourceId}`}, ${observedAt}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING raw_import_id
+      `;
+      navSnapshotsInserted += rows.length;
+    }
+
+    let positionSnapshotsInserted = 0;
+    for (const snapshot of parsed.positionSnapshots) {
+      const rows = await transaction`
+        INSERT INTO reported_position_snapshot (
+          raw_import_id, snapshot_date, account_id, instrument_id, ticker, name, category,
+          quantity, price, market_value, currency, cost_basis,
+          base_currency, fx_to_base, market_value_base, source
+        ) VALUES (
+          ${insertedRaw[0].id}, ${snapshot.date}, ${input.accountId}, ${snapshot.instrumentId},
+          ${snapshot.ticker}, ${snapshot.name}, ${snapshot.category}, ${snapshot.quantity},
+          ${snapshot.price}, ${snapshot.marketValue}, ${snapshot.currency}, ${snapshot.costBasis},
+          ${snapshot.baseCurrency}, ${snapshot.fxToBase}, ${snapshot.marketValueBase},
+          ${`ibkr_flex:${input.sourceId}`}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING raw_import_id
+      `;
+      positionSnapshotsInserted += rows.length;
+    }
+
     return {
       rawImportId: insertedRaw[0].id,
       contentHash: parsed.contentHash,
       duplicateStatement: false,
       inserted: { instruments: insertedInstruments, trades: insertedTrades, cashFlows: insertedCashFlows },
+      navSnapshotsInserted,
+      positionSnapshotsInserted,
     };
   });
 }
