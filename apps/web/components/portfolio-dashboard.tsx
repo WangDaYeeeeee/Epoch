@@ -274,8 +274,10 @@ export async function PortfolioDashboard({ view }: { view: DashboardView }) {
               }))}
             />
             <RiskInstrumentDetails
+              current={data.risk}
               instruments={data.risk.instruments.map((item) => ({ ...item, name: instrumentName(item.instrumentId) }))}
               diagnostics={data.risk.modelDiagnostics}
+              history={data.riskHistory ?? []}
             />
             <p className="exposure-note">当前结果使用 SHAR 日频半方差近似、250 日样本相关性；IV 输入暂不可用，模型处于降级状态。{data.risk.dataStatus === "stale" ? "行情不是最新状态，不作为新的正式交易结论。" : ""}</p>
           </article>
