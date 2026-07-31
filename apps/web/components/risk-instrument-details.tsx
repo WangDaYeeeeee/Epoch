@@ -1,9 +1,9 @@
 "use client";
 
 import { Activity, ShieldAlert } from "lucide-react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useState, type PointerEvent as ReactPointerEvent } from "react";
-import type { PortfolioRiskSnapshot } from "@/lib/types";
+import type { PortfolioPayload, PortfolioRiskSnapshot } from "@/lib/types";
 
 type RiskInstrument = PortfolioRiskSnapshot["instruments"][number] & { name: string };
 type Diagnostics = NonNullable<PortfolioRiskSnapshot["modelDiagnostics"]>;
@@ -19,6 +19,14 @@ type RiskCompositionDatum = {
 const percent = (value: number) => `${(value * 100).toFixed(2)}%`;
 const bp2 = (value: number) => `${(value * 10000).toFixed(2)} bp²`;
 const riskPalette = ["#8f7df4", "#e56e88", "#51c9b0", "#e7b764", "#5da8e8", "#c879e8", "#77c66e", "#e28d58"];
+
+function glassHighlight(color: string, alpha: number) {
+  const red = Number.parseInt(color.slice(1, 3), 16);
+  const green = Number.parseInt(color.slice(3, 5), 16);
+  const blue = Number.parseInt(color.slice(5, 7), 16);
+  const lift = (channel: number) => Math.round(channel + (255 - channel) * 0.32);
+  return `rgba(${lift(red)},${lift(green)},${lift(blue)},${alpha})`;
+}
 
 export function effectiveHoldingCount(values: number[]): number | null {
   const magnitudes = values.map(Math.abs).filter((value) => Number.isFinite(value) && value > 0);
@@ -129,16 +137,23 @@ function tailTone(forecast: Forecast) {
   return "low";
 }
 
+function compositionRiskTone(item: RiskCompositionDatum) {
+  const amplification = riskAmplification(item.weightShare, item.riskShare) ?? 0;
+  if (item.hedging || amplification >= 1.35 || item.riskShare >= 0.3) return "high";
+  if (amplification >= 1 || item.riskShare >= 0.18) return "medium";
+  return "low";
+}
+
 function GlobalRiskComposition({
   current,
   data,
   history,
-  maximumVolatility,
+  volatilityHistory,
 }: {
   current: Pick<PortfolioRiskSnapshot, "asOf" | "instruments">;
   data: RiskCompositionDatum[];
   history: PortfolioRiskSnapshot[];
-  maximumVolatility: number;
+  volatilityHistory: NonNullable<PortfolioPayload["instrumentVolatilityHistory"]>;
 }) {
   const [hovered, setHovered] = useState<{
     instrumentId: string;
@@ -146,6 +161,7 @@ function GlobalRiskComposition({
     x: number;
     y: number;
   } | null>(null);
+  const [volatilityRange, setVolatilityRange] = useState<"3m" | "6m" | "1y" | "all">("1y");
   const center = 210;
   const weightRadius = 132;
   const riskInnerRadius = weightRadius;
@@ -180,7 +196,8 @@ function GlobalRiskComposition({
   const volatilitySeries = data.map((item, index) => ({
     ...item,
     key: `instrument${index}`,
-    points: instrumentVolatilitySeries(item.instrument.instrumentId, current, history),
+    points: volatilityHistory.find((series) => series.instrumentId === item.instrument.instrumentId)?.points
+      ?? instrumentVolatilitySeries(item.instrument.instrumentId, current, history),
   }));
   const mixedByDate = new Map<string, Record<string, string | number>>();
   for (const series of volatilitySeries) {
@@ -192,7 +209,27 @@ function GlobalRiskComposition({
       });
     }
   }
-  const mixedVolatility = [...mixedByDate.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)));
+  const fullMixedVolatility = [...mixedByDate.values()].sort((left, right) => String(left.date).localeCompare(String(right.date)));
+  const latestVolatilityDate = String(fullMixedVolatility.at(-1)?.date ?? "");
+  const rangeMonths = volatilityRange === "3m" ? 3 : volatilityRange === "6m" ? 6 : volatilityRange === "1y" ? 12 : null;
+  const cutoffDate = rangeMonths && latestVolatilityDate
+    ? (() => {
+      const value = new Date(`${latestVolatilityDate}T00:00:00Z`);
+      value.setUTCMonth(value.getUTCMonth() - rangeMonths);
+      return value.toISOString().slice(0, 10);
+    })()
+    : "";
+  const mixedVolatility = cutoffDate
+    ? fullMixedVolatility.filter((point) => String(point.date) >= cutoffDate)
+    : fullMixedVolatility;
+  const visibleVolatilityMaximum = Math.max(
+    ...mixedVolatility.flatMap((point) => volatilitySeries.flatMap((series) => {
+      const value = point[series.key];
+      return typeof value === "number" && Number.isFinite(value) ? [value] : [];
+    })),
+    0.01,
+  );
+  const volatilityAxisMaximum = Math.max(0.05, Math.ceil(visibleVolatilityMaximum * 20) / 20);
   const moveTooltip = (
     event: ReactPointerEvent<SVGPathElement>,
     item: RiskCompositionDatum,
@@ -273,16 +310,54 @@ function GlobalRiskComposition({
                     />
                 ))}
               </g>
+              <g aria-hidden="true" className="risk-glass-rims wide">
+                {geometry.map((item) => (
+                  <path
+                    className={hovered?.instrumentId === item.instrument.instrumentId ? "active" : ""}
+                    d={item.weightPath}
+                    key={`${item.instrument.instrumentId}-weight-wide-rim`}
+                    stroke={glassHighlight(item.color, hovered?.instrumentId === item.instrument.instrumentId ? 0.06 : 0.04)}
+                  />
+                ))}
+                {geometry.map((item) => (
+                  <path
+                    className={hovered?.instrumentId === item.instrument.instrumentId ? "active" : ""}
+                    d={item.riskPath}
+                    key={`${item.instrument.instrumentId}-risk-wide-rim`}
+                    stroke={glassHighlight(item.color, hovered?.instrumentId === item.instrument.instrumentId ? 0.06 : 0.04)}
+                  />
+                ))}
+              </g>
+              <g aria-hidden="true" className="risk-glass-rims crisp">
+                {geometry.map((item) => (
+                  <path
+                    className={hovered?.instrumentId === item.instrument.instrumentId ? "active" : ""}
+                    d={item.weightPath}
+                    key={`${item.instrument.instrumentId}-weight-crisp-rim`}
+                    stroke={glassHighlight(item.color, hovered?.instrumentId === item.instrument.instrumentId ? 0.2 : 0.14)}
+                  />
+                ))}
+                {geometry.map((item) => (
+                  <path
+                    className={hovered?.instrumentId === item.instrument.instrumentId ? "active" : ""}
+                    d={item.riskPath}
+                    key={`${item.instrument.instrumentId}-risk-crisp-rim`}
+                    stroke={glassHighlight(item.color, hovered?.instrumentId === item.instrument.instrumentId ? 0.2 : 0.14)}
+                  />
+                ))}
+              </g>
             </svg>
             {hovered && hoveredItem && (
-              <div className="risk-sector-tooltip" style={{ left: hovered.x, top: hovered.y }}>
-                <span>{hovered.layer}</span>
+              <div
+                className={`risk-sector-tooltip risk-${compositionRiskTone(hoveredItem)}`}
+                style={{ left: hovered.x, top: hovered.y }}
+              >
                 <strong>{symbolFor(hoveredItem.instrument.instrumentId)}</strong>
                 <small>{hoveredItem.instrument.name}</small>
                 <dl>
                   <div><dt>资金</dt><dd>{percent(hoveredItem.weightShare)}</dd></div>
-                  <div><dt>风险</dt><dd>{percent(hoveredItem.riskShare)}</dd></div>
-                  <div><dt>放大</dt><dd>{riskAmplification(hoveredItem.weightShare, hoveredItem.riskShare)?.toFixed(2)}×</dd></div>
+                  <div><dt>风险</dt><dd className="risk-value">{percent(hoveredItem.riskShare)}</dd></div>
+                  <div><dt>放大</dt><dd className="risk-value">{riskAmplification(hoveredItem.weightShare, hoveredItem.riskShare)?.toFixed(2)}×</dd></div>
                   <div><dt>波动率</dt><dd>{percent(hoveredItem.instrument.volatilityAnnualized)}</dd></div>
                 </dl>
               </div>
@@ -291,21 +366,62 @@ function GlobalRiskComposition({
           <figcaption>内外层连续贴合且共用扇区边界；外层半径变化表示风险贡献</figcaption>
         </figure>
         <div className="risk-volatility-mix">
-          <div>
-            <h5>标的波动率趋势</h5>
-            <span>统一纵轴 · 年化</span>
+          <div className="risk-volatility-head">
+            <div>
+              <h5>标的 σ 历史</h5>
+              <span>真实行情 · GK 60D 年化</span>
+            </div>
+            <div aria-label="波动率历史时间范围" className="risk-volatility-ranges" role="group">
+              {([
+                ["3m", "3M"],
+                ["6m", "6M"],
+                ["1y", "1Y"],
+                ["all", "全部"],
+              ] as const).map(([value, label]) => (
+                <button
+                  aria-pressed={volatilityRange === value}
+                  className={volatilityRange === value ? "active" : ""}
+                  key={value}
+                  onClick={() => setVolatilityRange(value)}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
           {mixedVolatility.length > 1 ? (
             <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={mixedVolatility} margin={{ top: 10, right: 8, bottom: 0, left: -14 }}>
+              <ComposedChart data={mixedVolatility} margin={{ top: 10, right: 8, bottom: 0, left: -14 }}>
+                <defs>
+                  {volatilitySeries.map((item) => (
+                    <linearGradient id={`risk-volatility-projection-${item.key}`} key={item.key} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={item.color} stopOpacity={0.25} />
+                      <stop offset="100%" stopColor={item.color} stopOpacity={0} />
+                    </linearGradient>
+                  ))}
+                </defs>
                 <CartesianGrid stroke="rgba(118,98,238,.12)" strokeDasharray="3 4" vertical={false} />
                 <XAxis dataKey="date" minTickGap={34} tick={{ fill: "#68627f", fontSize: 7 }} tickLine={false} axisLine={false} />
-                <YAxis domain={[0, maximumVolatility]} tickFormatter={(value) => `${(Number(value) * 100).toFixed(0)}%`} tick={{ fill: "#68627f", fontSize: 7 }} tickLine={false} axisLine={false} />
+                <YAxis domain={[0, volatilityAxisMaximum]} tickFormatter={(value) => `${(Number(value) * 100).toFixed(0)}%`} tick={{ fill: "#68627f", fontSize: 7 }} tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{ background: "#100b30", border: "1px solid rgba(169,155,255,.24)", borderRadius: 8, fontSize: 8 }}
                   formatter={(value, name) => [percent(Number(value)), String(name)]}
                   labelStyle={{ color: "#8f89a4" }}
                 />
+                {hovered && volatilitySeries.filter((item) => item.instrument.instrumentId === hovered.instrumentId).map((item) => (
+                  <Area
+                    connectNulls
+                    dataKey={item.key}
+                    fill={`url(#risk-volatility-projection-${item.key})`}
+                    fillOpacity={1}
+                    isAnimationActive={false}
+                    key={`${item.instrument.instrumentId}-projection`}
+                    legendType="none"
+                    stroke="none"
+                    type="monotone"
+                  />
+                ))}
                 {volatilitySeries.map((item) => (
                   <Line
                     connectNulls
@@ -314,12 +430,15 @@ function GlobalRiskComposition({
                     isAnimationActive={false}
                     key={item.instrument.instrumentId}
                     name={symbolFor(item.instrument.instrumentId)}
+                    opacity={hovered && hovered.instrumentId !== item.instrument.instrumentId ? 0.5 : 1}
                     stroke={item.color}
-                    strokeWidth={1.7}
+                    strokeDasharray={hovered && hovered.instrumentId !== item.instrument.instrumentId ? "4 4" : undefined}
+                    strokeWidth={hovered?.instrumentId === item.instrument.instrumentId ? 2.5 : 1.7}
+                    style={{ transition: "opacity .16s ease" }}
                     type="monotone"
                   />
                 ))}
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           ) : <p>等待更多历史风险批次。</p>}
         </div>
@@ -406,21 +525,18 @@ export function RiskInstrumentDetails({
   diagnostics,
   history,
   instruments,
+  volatilityHistory = [],
 }: {
   current: Pick<PortfolioRiskSnapshot, "asOf" | "instruments">;
   diagnostics?: Diagnostics;
   history: PortfolioRiskSnapshot[];
   instruments: RiskInstrument[];
+  volatilityHistory?: NonNullable<PortfolioPayload["instrumentVolatilityHistory"]>;
 }) {
   const ordered = sortRiskInstruments(instruments);
   const composition = buildRiskComposition(ordered);
   const riskEffectiveCount = effectiveHoldingCount(instruments.map((instrument) => instrument.riskContribution));
   const weightEffectiveCount = effectiveHoldingCount(instruments.map((instrument) => instrument.weight));
-  const maximumVolatility = Math.max(
-    ...instruments.map((instrument) => instrument.volatilityAnnualized),
-    ...history.flatMap((snapshot) => snapshot.instruments.map((instrument) => instrument.volatilityAnnualized)),
-    0.01,
-  );
   const absoluteRiskTotal = ordered.reduce((sum, instrument) => sum + Math.abs(instrument.riskContribution), 0);
   const topRiskShare = absoluteRiskTotal > 0
     ? ordered.slice(0, 3).reduce((sum, instrument) => sum + Math.abs(instrument.riskContribution), 0) / absoluteRiskTotal
@@ -449,7 +565,12 @@ export function RiskInstrumentDetails({
         </dl>
       </div>
 
-      <GlobalRiskComposition current={current} data={composition} history={history} maximumVolatility={maximumVolatility} />
+      <GlobalRiskComposition
+        current={current}
+        data={composition}
+        history={history}
+        volatilityHistory={volatilityHistory}
+      />
 
       <TailRiskPanel diagnostics={diagnostics} instruments={instruments} />
     </section>

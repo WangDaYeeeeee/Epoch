@@ -59,6 +59,11 @@ export type PortfolioPayload = {
   returnAttribution?: ReturnAttribution;
   risk?: PortfolioRiskSnapshot;
   riskHistory?: PortfolioRiskSnapshot[];
+  instrumentVolatilityHistory?: {
+    instrumentId: string;
+    estimator: "garman_klass_60d";
+    points: { date: string; value: number }[];
+  }[];
   riskScenarios?: PortfolioRiskSnapshot[];
   riskDrift?: RiskDriftSnapshot;
   operations?: OperationsSnapshot;

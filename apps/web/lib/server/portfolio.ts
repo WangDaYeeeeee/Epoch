@@ -12,6 +12,7 @@ import { discoverHeldFunds, holdingsClassifications, selectFundHoldingsSnapshot 
 import { INSTRUMENT_CLASSIFICATION_VERSION, instrumentClassifications } from "../domain/instrument-classifications";
 import { calculateMoneyWeightedReturn, performanceCashFlows } from "../domain/performance";
 import { canonicalBrokerPositionInstrumentId, marketDataRequirement } from "../domain/market-data";
+import { rollingGarmanKlassVolatilityHistory } from "../domain/instrument-volatility-history";
 import { loadBaselineDataset, reconcileEventCoverage, reconcilePerformanceReturns, reconcilePositionQuantities, reconcileReportedValuations, type EventCoverage, type PositionReconciliation, type ValuationCoverage } from "./baseline-data";
 import { parseCsv } from "./csv";
 import { createDatabaseClient } from "./database";
@@ -539,6 +540,19 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
       anchor: driftAnchor,
     })
     : undefined;
+  const dataRoot = resolveDataRoot();
+  const instrumentVolatilityHistory = latestRiskSnapshot && dataRoot
+    ? (() => {
+      const barsPath = resolve(dataRoot, "normalized/market-bars.csv");
+      if (!existsSync(barsPath)) return [];
+      const bars = readRows(barsPath);
+      return latestRiskSnapshot.instruments.map((instrument) => ({
+        instrumentId: instrument.instrumentId,
+        estimator: "garman_klass_60d" as const,
+        points: rollingGarmanKlassVolatilityHistory(instrument.instrumentId, bars),
+      }));
+    })()
+    : [];
   return {
     ...synchronizedPayload,
     health: {
@@ -547,6 +561,7 @@ export async function loadPortfolioFromDatabase(sql: Sql): Promise<PortfolioPayl
     },
     ...(latestRiskSnapshot ? { risk: latestRiskSnapshot } : {}),
     ...(riskHistory.length ? { riskHistory } : {}),
+    ...(instrumentVolatilityHistory.length ? { instrumentVolatilityHistory } : {}),
     ...(riskScenarios.length ? { riskScenarios } : {}),
     ...(riskDrift ? { riskDrift } : {}),
     eventHorizon,

@@ -1345,9 +1345,9 @@ button:is(
 
 /* Unified risk composition: compact legend, interactive solid sectors, and mixed volatility history. */
 .risk-composition-body {
-  grid-template-columns: minmax(170px,.72fr) 268px minmax(270px,1.15fr);
+  grid-template-columns: minmax(255px,285px) 268px minmax(310px,1fr);
   align-items: stretch;
-  gap: 16px;
+  gap: 12px;
   padding: 14px;
 }
 .risk-composition figure { align-content: center; }
@@ -1366,39 +1366,60 @@ button:is(
 .risk-weight-sectors path { opacity: .82; filter: none; }
 .risk-area-values path { opacity: .44; filter: none; }
 .risk-area-values path.hedging { opacity: .3; }
-.risk-weight-sectors path.active,
-.risk-area-values path.active {
-  opacity: 1;
+.risk-weight-sectors path.active {
+  opacity: .96;
   transform: scale(1.035);
   filter: none;
 }
+.risk-area-values path.active {
+  opacity: .68;
+  transform: scale(1.035);
+  filter: none;
+}
+.risk-area-values path.hedging.active { opacity: .54; }
+.risk-glass-rims { pointer-events: none; }
+.risk-glass-rims path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  transition: transform .16s ease,stroke .16s ease;
+  vector-effect: non-scaling-stroke;
+}
+.risk-glass-rims.wide path { stroke-width: 1.2px; }
+.risk-glass-rims.crisp path { stroke-width: .45px; }
+.risk-glass-rims path.active { transform: scale(1.035); }
 .risk-sector-tooltip {
   position: absolute;
   z-index: 8;
   display: grid;
-  width: 142px;
-  gap: 3px;
-  padding: 9px 10px;
-  border: 1px solid rgba(205,198,255,.2);
-  border-radius: 8px;
-  background: rgba(12,8,35,.94);
-  box-shadow: 0 12px 30px rgba(1,0,10,.4);
+  width: 172px;
+  gap: 4px;
+  padding: 12px 13px;
+  border: 1px solid rgba(221,216,255,.22);
+  border-radius: 11px;
+  background: rgba(18,13,47,.7);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08),0 10px 24px rgba(1,0,10,.25);
   pointer-events: none;
   transform: translate(12px,-50%);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px) saturate(118%);
+  -webkit-backdrop-filter: blur(16px) saturate(118%);
 }
-.risk-sector-tooltip > span { color: #8f89a4; font-size: 6px; }
-.risk-sector-tooltip > strong { color: #f3f1fb; font: 600 10px Montserrat; }
-.risk-sector-tooltip > small { overflow: hidden; color: #68627f; font-size: 6px; text-overflow: ellipsis; white-space: nowrap; }
-.risk-sector-tooltip dl { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 8px; margin: 5px 0 0; }
+.risk-sector-tooltip > strong { color: #f3f1fb; font: 600 12px Montserrat; }
+.risk-sector-tooltip > small { overflow: hidden; color: #9690ad; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.risk-sector-tooltip dl { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 11px; margin: 7px 0 0; }
 .risk-sector-tooltip dl div { display: flex; justify-content: space-between; gap: 5px; }
-.risk-sector-tooltip dt { color: #68627f; font-size: 6px; }
-.risk-sector-tooltip dd { margin: 0; color: #d8d4eb; font: 500 6px Montserrat; }
+.risk-sector-tooltip dt { color: #77718d; font-size: 7px; }
+.risk-sector-tooltip dd { margin: 0; color: #d8d4eb; font: 500 8px Montserrat; }
+.risk-sector-tooltip.risk-low .risk-value { color: #51c9b0; }
+.risk-sector-tooltip.risk-medium .risk-value { color: #e7b764; }
+.risk-sector-tooltip.risk-high .risk-value { color: #e56e88; }
 
 .risk-composition-legend {
   display: grid;
-  align-content: center;
+  align-content: start;
+  align-self: center;
   gap: 0;
   overflow: hidden;
   border: 1px solid rgba(205,198,255,.14);
@@ -1408,22 +1429,22 @@ button:is(
 .risk-composition-labels,
 .risk-composition-item {
   display: grid;
-  grid-template-columns: minmax(98px,1fr) 43px 43px;
+  grid-template-columns: minmax(122px,1fr) 44px 44px;
   align-items: center;
-  gap: 7px;
-  min-height: 40px;
-  padding: 5px 8px;
+  gap: 4px;
+  min-height: 37px;
+  padding: 4px 8px;
   border-bottom: 1px solid rgba(43,36,96,.34);
 }
 .risk-composition-labels {
-  min-height: 25px;
+  min-height: 24px;
   padding-top: 0;
   padding-bottom: 0;
   background: rgba(118,98,238,.055);
 }
 .risk-composition-labels span {
   color: #68627f;
-  font-size: 6px;
+  font-size: 7px;
   font-weight: 600;
   text-align: right;
 }
@@ -1444,17 +1465,17 @@ button:is(
   box-shadow: inset 0 1px 0 rgba(255,255,255,.28),0 0 8px rgba(118,98,238,.12)!important;
 }
 .risk-legend-identity > div { display: grid; gap: 2px; min-width: 0; }
-.risk-legend-identity strong { color: #f3f1fb; font: 600 8px Montserrat; }
+.risk-legend-identity strong { color: #f3f1fb; font: 600 9px Montserrat; }
 .risk-legend-identity small {
   overflow: hidden;
   color: #68627f;
-  font-size: 5.5px;
+  font-size: 6.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .risk-composition-item > span {
   color: #b5b0c9;
-  font: 500 7px Montserrat;
+  font: 500 8.5px Montserrat;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -1467,14 +1488,39 @@ button:is(
   padding: 10px 8px 2px;
   border-left: 1px solid rgba(118,98,238,.14);
 }
-.risk-volatility-mix > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 6px; }
+.risk-volatility-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 6px; }
+.risk-volatility-head > div:first-child { display: grid; gap: 2px; }
 .risk-volatility-mix h5 { margin: 0; color: #d8d4eb; font: 600 8px Montserrat; }
-.risk-volatility-mix > div:first-child > span { color: #68627f; font-size: 6px; }
+.risk-volatility-head > div:first-child > span { color: #68627f; font-size: 6px; }
+.risk-volatility-ranges {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(169,155,255,.12);
+  border-radius: 7px;
+  background: rgba(8,5,29,.36);
+}
+.risk-volatility-ranges button {
+  min-width: 25px;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #68627f;
+  cursor: pointer;
+  font: 600 6px Montserrat;
+}
+.risk-volatility-ranges button:hover { color: #b5b0c9; }
+.risk-volatility-ranges button.active {
+  background: rgba(118,98,238,.2);
+  color: #d8d4eb;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
 .risk-volatility-mix > p { align-self: center; color: #68627f; font-size: 7px; text-align: center; }
 
 @media (max-width: 900px) {
   .risk-composition-body {
-    grid-template-columns: minmax(160px,.68fr) 232px minmax(235px,1fr);
+    grid-template-columns: minmax(225px,250px) 232px minmax(235px,1fr);
     gap: 10px;
     padding-right: 10px;
     padding-left: 10px;
